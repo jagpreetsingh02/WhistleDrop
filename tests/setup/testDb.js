@@ -11,8 +11,8 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
  */
 let mongoServer;
 
-async function connect() {
-  mongoServer = await MongoMemoryServer.create();
+async function connect(serverOptions = {}) {
+  mongoServer = await MongoMemoryServer.create(serverOptions);
   await mongoose.connect(mongoServer.getUri());
   // Unique indexes (e.g. caseCodeHash) must exist for the tests that rely on them.
   await Promise.all(Object.values(mongoose.models).map((model) => model.syncIndexes()));

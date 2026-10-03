@@ -70,6 +70,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `JWT_EXPIRES_IN` | `2h` | Moderator session length |
 | `TRUST_PROXY` | `0` | Reverse-proxy hops in front of the API — **set to `1` behind a load balancer** |
 | `TIMESTAMP_BUCKET_MINUTES` | `15` | Reporter-originated timestamps are rounded down to this window (`0` = exact) |
+| `RETENTION_DAYS_AFTER_CLOSE` | `365` | Closed reports are deleted this many days after closing (`0` = keep forever) |
 | `CORS_ORIGIN` | `*` | Comma-separated allowlist, or `*` |
 | `RATE_LIMIT_WINDOW_MINUTES` | `15` | Window for all limiters |
 | `RATE_LIMIT_MAX` | `100` | Requests per window, whole API |
@@ -636,6 +637,23 @@ relative order inside that window is unknowable — by design. Lists sort by
 `createdAt` then `_id`, so pagination stays stable. Moderator actions keep exact
 timestamps; they describe staff activity, not the reporter's.
 
+### Retention
+
+The less data kept, the less there is to leak, subpoena or cross-reference.
+When a report becomes `RESOLVED` or `DISMISSED`, `closedAt` is set **in the same
+atomic write as the status**, and a MongoDB TTL index deletes the report
+`RETENTION_DAYS_AFTER_CLOSE` days later (default 365; `0` disables it).
+
+- Open reports have `closedAt: null` and are never touched by the TTL index.
+- MongoDB's TTL monitor runs about once a minute, so deletion happens shortly
+  after the deadline, not to the second.
+- Indexes are synchronised at startup (`syncIndexes()`), so changing the
+  retention period takes effect on the next restart. Mongoose's default
+  `autoIndex` only creates indexes, so a changed TTL would otherwise conflict
+  with the existing one and `0` would never remove it.
+- A test runs MongoDB's TTL monitor every second and checks that a report closed
+  400 days ago is really deleted while an open one survives.
+
 ### PII warnings on free text
 
 Reporters often undo their own anonymity — signing off with an email address,
@@ -823,9 +841,6 @@ database.
   from that should use Tor.
 - **Rate limits are in-memory.** Correct for a single instance; a multi-instance
   deployment needs a shared store (Redis) so all instances see the same counts.
-- **No data retention policy yet.** Reports live forever. A real deployment
-  should age out resolved cases (for example, delete 12 months after closure) —
-  the less data kept, the less there is to leak.
 - **No moderator audit log beyond status updates.** Reads are not recorded; a
   regulated deployment would want a separate audit trail of who opened which
   report.

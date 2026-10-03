@@ -211,6 +211,7 @@ describe('POST /api/v1/reports — anonymous submission', () => {
           '__v',
           'caseCodeHash',
           'category',
+          'closedAt',
           'createdAt',
           'description',
           'evidenceUrl',

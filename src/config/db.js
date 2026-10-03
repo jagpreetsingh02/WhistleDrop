@@ -16,6 +16,14 @@ async function connectDatabase(uri = env.mongoUri) {
   });
 
   logger.info('MongoDB connected');
+
+  // Bring indexes in line with the schemas. Mongoose's autoIndex only ever
+  // creates indexes, so without this a changed RETENTION_DAYS_AFTER_CLOSE
+  // would hit an "index options conflict" and the old TTL would stay active,
+  // and setting it to 0 would never remove the TTL index.
+  await Promise.all(Object.values(mongoose.models).map((model) => model.syncIndexes()));
+  logger.info('MongoDB indexes synchronised');
+
   return mongoose.connection;
 }
 

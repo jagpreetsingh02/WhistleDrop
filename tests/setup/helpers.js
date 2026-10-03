@@ -35,23 +35,4 @@ async function loginAsModerator(overrides = {}) {
   };
 }
 
-/** Submits a report and returns the case code plus the moderator-facing id. */
-async function submitReport(overrides = {}, authHeader) {
-  const response = await request(app)
-    .post('/api/v1/reports')
-    .send({ ...VALID_REPORT, ...overrides });
-
-  const { caseCode } = response.body.data;
-
-  let id = null;
-  if (authHeader) {
-    const list = await request(app)
-      .get('/api/v1/moderator/reports')
-      .set('Authorization', authHeader);
-    id = list.body.data[0].id;
-  }
-
-  return { response, caseCode, id };
-}
-
-module.exports = { app, request, VALID_REPORT, MODERATOR_CREDENTIALS, loginAsModerator, submitReport };
+module.exports = { app, request, VALID_REPORT, MODERATOR_CREDENTIALS, loginAsModerator };

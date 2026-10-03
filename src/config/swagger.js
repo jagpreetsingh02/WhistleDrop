@@ -203,6 +203,13 @@ const openApiSpec = {
           },
           submittedAt: { type: 'string', format: 'date-time' },
           lastUpdatedAt: { type: 'string', format: 'date-time' },
+          closedAt: {
+            type: 'string',
+            format: 'date-time',
+            nullable: true,
+            description:
+              'When the report became RESOLVED or DISMISSED. The report is deleted RETENTION_DAYS_AFTER_CLOSE days later.',
+          },
           updates: {
             type: 'array',
             items: {

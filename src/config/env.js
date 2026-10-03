@@ -52,6 +52,8 @@ const schema = z.object({
 
   // Reporter-originated timestamps are rounded down to this many minutes.
   TIMESTAMP_BUCKET_MINUTES: z.coerce.number().int().min(0).max(1440).default(15),
+  // Closed reports are deleted this many days after closing. 0 keeps them forever.
+  RETENTION_DAYS_AFTER_CLOSE: z.coerce.number().int().min(0).max(36500).default(365),
 
   RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
@@ -86,6 +88,7 @@ const env = {
   trustProxy: parseTrustProxy(raw.TRUST_PROXY),
   privacy: {
     timestampBucketMinutes: raw.TIMESTAMP_BUCKET_MINUTES,
+    retentionDaysAfterClose: raw.RETENTION_DAYS_AFTER_CLOSE,
   },
   corsOrigin: raw.CORS_ORIGIN === '*' ? '*' : raw.CORS_ORIGIN.split(',').map((o) => o.trim()),
   rateLimit: {

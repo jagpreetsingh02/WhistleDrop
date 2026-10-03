@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const env = require('../config/env');
 const { CATEGORIES, STATUSES, STATUS } = require('../utils/constants');
 
 /**
@@ -83,6 +84,12 @@ const reportSchema = new mongoose.Schema(
       type: [statusUpdateSchema],
       default: [],
     },
+    // Set in the same atomic write that moves the report to RESOLVED or
+    // DISMISSED. Drives the retention TTL index below.
+    closedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -93,5 +100,20 @@ const reportSchema = new mongoose.Schema(
 
 // Common moderator query: "open SECURITY cases, newest first".
 reportSchema.index({ status: 1, category: 1, createdAt: -1 });
+
+/**
+ * Retention: MongoDB deletes a report automatically once it has been closed
+ * for RETENTION_DAYS_AFTER_CLOSE days. Data that no longer exists cannot leak,
+ * be subpoenaed or be cross-referenced. Open reports have closedAt = null and
+ * are never touched (TTL indexes ignore non-date values). The TTL monitor runs
+ * about once a minute, so deletion is "shortly after", not to the second.
+ */
+const { retentionDaysAfterClose } = env.privacy;
+if (retentionDaysAfterClose > 0) {
+  reportSchema.index(
+    { closedAt: 1 },
+    { name: 'closedAt_retention_ttl', expireAfterSeconds: retentionDaysAfterClose * 24 * 60 * 60 }
+  );
+}
 
 module.exports = mongoose.model('Report', reportSchema);

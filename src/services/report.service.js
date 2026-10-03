@@ -49,6 +49,7 @@ function toModeratorView(report) {
     allowedTransitions: getAllowedTransitions(report.status),
     submittedAt: report.createdAt,
     lastUpdatedAt: report.updatedAt,
+    closedAt: report.closedAt || null,
     updates: report.updates.map((update) => ({
       id: update._id.toString(),
       message: update.message,
@@ -236,10 +237,12 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
 
   assertTransitionAllowed(current.status, nextStatus);
 
+  // closedAt is written in the same operation as the status, so there is no
+  // moment at which a report is closed but missing from the retention index.
   const updated = await Report.findOneAndUpdate(
     { _id: reportId, status: current.status },
     {
-      $set: { status: nextStatus },
+      $set: { status: nextStatus, closedAt: isTerminal(nextStatus) ? new Date() : null },
       $push: {
         updates: {
           message: message || `Status changed to ${nextStatus}`,
