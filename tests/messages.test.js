@@ -86,7 +86,10 @@ describe('full conversation journey', () => {
       .set('Authorization', authHeader);
     expect(detail.body.data.awaitingReporter).toBe(false);
     expect(detail.body.data.messages).toEqual([
-      expect.objectContaining({ from: 'MODERATOR', moderator: expect.objectContaining({ displayName: 'Ethics Desk' }) }),
+      expect.objectContaining({
+        from: 'MODERATOR',
+        moderator: expect.objectContaining({ displayName: 'Ethics Desk' }),
+      }),
       expect.objectContaining({
         from: 'REPORTER',
         body: 'It is the infra-scripts repo, in the deploy folder.',
@@ -207,7 +210,10 @@ describe('thread size limit', () => {
       moderator: null,
       createdAt: new Date(),
     }));
-    await Report.collection.updateOne({ caseCodeHash: { $exists: true } }, { $set: { messages: filler } });
+    await Report.collection.updateOne(
+      { caseCodeHash: { $exists: true } },
+      { $set: { messages: filler } }
+    );
 
     const fromReporter = await reply(caseCode, 'One too many.');
     const fromModerator = await ask(id, 'One too many.');
@@ -232,7 +238,11 @@ describe('validation and errors', () => {
 
   it.each([
     ['an empty body', { body: '   ' }, 'body must not be empty'],
-    ['a body over 1000 characters', { body: 'x'.repeat(1001) }, 'body must be at most 1000 characters'],
+    [
+      'a body over 1000 characters',
+      { body: 'x'.repeat(1001) },
+      'body must be at most 1000 characters',
+    ],
     ['a missing body', {}, 'body is required'],
   ])('rejects %s', async (_label, payload, message) => {
     const { caseCode } = await seedReport();
@@ -254,7 +264,9 @@ describe('validation and errors', () => {
 
   it('requires authentication for moderator messages', async () => {
     const { id } = await seedReport();
-    const res = await request(app).post(`/api/v1/moderator/reports/${id}/messages`).send({ body: 'Hi' });
+    const res = await request(app)
+      .post(`/api/v1/moderator/reports/${id}/messages`)
+      .send({ body: 'Hi' });
     expect(res.status).toBe(401);
   });
 

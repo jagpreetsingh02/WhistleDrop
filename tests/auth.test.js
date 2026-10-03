@@ -122,11 +122,15 @@ describe('moderator route protection', () => {
 
   it('rejects a token signed with a different secret', async () => {
     const { moderator } = await loginAsModerator();
-    const forged = jwt.sign({ sub: moderator._id.toString(), role: 'moderator' }, 'another-secret', {
-      issuer: JWT_ISSUER,
-      audience: JWT_AUDIENCE,
-      expiresIn: '1h',
-    });
+    const forged = jwt.sign(
+      { sub: moderator._id.toString(), role: 'moderator' },
+      'another-secret',
+      {
+        issuer: JWT_ISSUER,
+        audience: JWT_AUDIENCE,
+        expiresIn: '1h',
+      }
+    );
 
     const res = await request(app).get(protectedRoute).set('Authorization', `Bearer ${forged}`);
     expect(res.status).toBe(401);

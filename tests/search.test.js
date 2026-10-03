@@ -61,7 +61,10 @@ async function seed() {
     const doc = await Report.findOne({ description: fixture.description });
     const date = new Date(fixture.createdAt);
     // eslint-disable-next-line no-await-in-loop
-    await Report.collection.updateOne({ _id: doc._id }, { $set: { createdAt: date, updatedAt: date } });
+    await Report.collection.updateOne(
+      { _id: doc._id },
+      { $set: { createdAt: date, updatedAt: date } }
+    );
     ids[fixture.key] = doc._id.toString();
   }
   return ids;
@@ -183,7 +186,10 @@ describe('hasEvidence', () => {
 
   it('false returns only reports without one', async () => {
     const ids = await seed();
-    expect(keysOf(await list('?hasEvidence=false&sort=oldest'), ids)).toEqual(['invoice', 'firewall']);
+    expect(keysOf(await list('?hasEvidence=false&sort=oldest'), ids)).toEqual([
+      'invoice',
+      'firewall',
+    ]);
   });
 
   it('rejects anything other than true/false', async () => {
@@ -199,7 +205,12 @@ describe('sort', () => {
     const ids = await seed();
 
     expect(keysOf(await list(), ids)).toEqual(['shouting', 'firewall', 'invoice', 'creds']);
-    expect(keysOf(await list('?sort=oldest'), ids)).toEqual(['creds', 'invoice', 'firewall', 'shouting']);
+    expect(keysOf(await list('?sort=oldest'), ids)).toEqual([
+      'creds',
+      'invoice',
+      'firewall',
+      'shouting',
+    ]);
   });
 
   it('recentlyUpdated puts the most recently worked-on report first', async () => {

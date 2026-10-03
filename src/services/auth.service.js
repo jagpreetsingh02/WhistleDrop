@@ -18,15 +18,11 @@ const { JWT_ISSUER, JWT_AUDIENCE, ROLE, AUDIT_ACTION } = require('../utils/const
 const DUMMY_HASH = bcrypt.hashSync('timing-attack-mitigation-placeholder', env.bcryptRounds);
 
 function signToken(moderator) {
-  return jwt.sign(
-    { sub: moderator._id.toString(), role: moderator.role },
-    env.jwt.secret,
-    {
-      expiresIn: env.jwt.expiresIn,
-      issuer: JWT_ISSUER,
-      audience: JWT_AUDIENCE,
-    }
-  );
+  return jwt.sign({ sub: moderator._id.toString(), role: moderator.role }, env.jwt.secret, {
+    expiresIn: env.jwt.expiresIn,
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  });
 }
 
 /**

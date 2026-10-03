@@ -54,7 +54,9 @@ describe('rate limiting', () => {
 
   it('throttles moderator login attempts', async () => {
     const attempt = () =>
-      request(app).post('/api/v1/auth/login').send({ username: 'nobody', password: 'guess-me-123' });
+      request(app)
+        .post('/api/v1/auth/login')
+        .send({ username: 'nobody', password: 'guess-me-123' });
 
     await attempt();
     await attempt();

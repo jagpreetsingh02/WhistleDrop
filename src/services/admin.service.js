@@ -65,7 +65,9 @@ async function setAccountActive({ actorId, targetId, isActive }) {
   if (updated) {
     await auditService.record({
       moderatorId: actorId,
-      action: isActive ? AUDIT_ACTION.ADMIN_ACTIVATE_ACCOUNT : AUDIT_ACTION.ADMIN_DEACTIVATE_ACCOUNT,
+      action: isActive
+        ? AUDIT_ACTION.ADMIN_ACTIVATE_ACCOUNT
+        : AUDIT_ACTION.ADMIN_DEACTIVATE_ACCOUNT,
       targetModeratorId: updated._id,
     });
     return updated;

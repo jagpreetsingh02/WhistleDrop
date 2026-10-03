@@ -10,7 +10,10 @@ const createStaffSchema = z.strictObject({
     .toLowerCase()
     .min(3, 'username must be at least 3 characters')
     .max(40, 'username must be at most 40 characters')
-    .regex(/^[a-z0-9._-]+$/, 'username may only contain letters, digits, dots, dashes and underscores'),
+    .regex(
+      /^[a-z0-9._-]+$/,
+      'username may only contain letters, digits, dots, dashes and underscores'
+    ),
   // Longer than the login minimum: these accounts can read every report.
   password: z
     .string({ message: 'password is required' })
@@ -31,7 +34,10 @@ const listStaffQuerySchema = z.object({
 });
 
 const staffIdParamsSchema = z.object({
-  id: z.string().trim().regex(/^[a-f\d]{24}$/i, 'id must be a valid moderator id'),
+  id: z
+    .string()
+    .trim()
+    .regex(/^[a-f\d]{24}$/i, 'id must be a valid moderator id'),
 });
 
 const listAuditQuerySchema = z.object({

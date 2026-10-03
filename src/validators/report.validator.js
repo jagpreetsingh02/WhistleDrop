@@ -56,7 +56,8 @@ const trackReportParamsSchema = z.object({
 });
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-const ISO_DATE_OR_DATETIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+const ISO_DATE_OR_DATETIME =
+  /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const isoDateField = (name) =>
@@ -92,7 +93,9 @@ const listReportsQuerySchema = z
       .min(2, 'q must be at least 2 characters')
       .max(100, 'q must be at most 100 characters')
       .optional(),
-    from: isoDateField('from').transform((value) => new Date(value)).optional(),
+    from: isoDateField('from')
+      .transform((value) => new Date(value))
+      .optional(),
     to: isoDateField('to')
       .transform((value) =>
         DATE_ONLY.test(value)
@@ -118,7 +121,10 @@ const listReportsQuerySchema = z
   .transform(({ to, ...rest }) => ({ ...rest, toExclusive: to }));
 
 const reportIdParamsSchema = z.object({
-  id: z.string().trim().regex(/^[a-f\d]{24}$/i, 'id must be a valid report id'),
+  id: z
+    .string()
+    .trim()
+    .regex(/^[a-f\d]{24}$/i, 'id must be a valid report id'),
 });
 
 const updateStatusSchema = z.strictObject({

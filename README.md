@@ -107,7 +107,7 @@ npm run create:moderator -- --username alice --password "Str0ngPassphrase!" --na
 ### 4. Run
 
 ```bash
-npm run dev     # nodemon, auto-restart
+npm run dev     # node --watch, restarts on file changes
 npm start       # production mode
 npm test        # full test suite (spins up its own in-memory MongoDB)
 ```

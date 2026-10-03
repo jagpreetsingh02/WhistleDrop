@@ -5,7 +5,6 @@ const bcrypt = require('bcryptjs');
 const env = require('../config/env');
 const { ROLES, ROLE } = require('../utils/constants');
 
-
 /**
  * A staff account (role `moderator` or `admin`). Staff are the only
  * identified actors in the system; reporters never have an account.

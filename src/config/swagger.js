@@ -1,12 +1,6 @@
 'use strict';
 
-const {
-  CATEGORIES,
-  STATUSES,
-  VISIBILITIES,
-  ROLES,
-  AUDIT_ACTIONS,
-} = require('../utils/constants');
+const { CATEGORIES, STATUSES, VISIBILITIES, ROLES, AUDIT_ACTIONS } = require('../utils/constants');
 const { PII_WARNING_CODES } = require('../utils/piiScanner');
 const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
 
@@ -170,7 +164,11 @@ const openApiSpec = {
         type: 'object',
         properties: {
           from: { type: 'string', enum: ['REPORTER', 'MODERATOR'], example: 'MODERATOR' },
-          body: { type: 'string', maxLength: 1000, example: 'Which repository are the credentials in?' },
+          body: {
+            type: 'string',
+            maxLength: 1000,
+            example: 'Which repository are the credentials in?',
+          },
           createdAt: {
             type: 'string',
             format: 'date-time',
@@ -388,7 +386,10 @@ const openApiSpec = {
         type: 'object',
         properties: {
           intact: { type: 'boolean' },
-          checkedEntries: { type: 'integer', description: 'Entries verified before the first break.' },
+          checkedEntries: {
+            type: 'integer',
+            description: 'Entries verified before the first break.',
+          },
           headSeq: { type: 'integer', description: 'Present when intact.' },
           headHash: {
             type: 'string',
@@ -574,7 +575,10 @@ const openApiSpec = {
             error: {
               message: 'Validation failed',
               details: [
-                { field: 'body.description', message: 'description must be at least 20 characters' },
+                {
+                  field: 'body.description',
+                  message: 'description must be at least 20 characters',
+                },
               ],
             },
           }),

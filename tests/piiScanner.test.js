@@ -107,7 +107,13 @@ describe('PII scanner (unit)', () => {
 
   describe('privacy of the scanner itself', () => {
     it('never echoes the matched text back', () => {
-      const secretBits = ['priya.sharma@example.com', '9876543210', '@rahul_k', 'EMP204518', 'Arjun'];
+      const secretBits = [
+        'priya.sharma@example.com',
+        '9876543210',
+        '@rahul_k',
+        'EMP204518',
+        'Arjun',
+      ];
       const text = `My name is Arjun. priya.sharma@example.com 9876543210 @rahul_k EMP204518`;
       const serialised = JSON.stringify(scanForPii(text));
 

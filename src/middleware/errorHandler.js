@@ -53,7 +53,8 @@ function normalize(error) {
   return null;
 }
 
-// eslint-disable-next-line no-unused-vars
+// Express recognises an error handler by its four parameters, so `_next`
+// must stay even though it is unused.
 function errorHandler(error, req, res, _next) {
   const appError = normalize(error);
 

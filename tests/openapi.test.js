@@ -42,7 +42,9 @@ const documentedOperations = Object.entries(openApiSpec.paths).flatMap(([path, i
 
 describe('OpenAPI document', () => {
   it('documents exactly the operations the API serves', () => {
-    const documented = documentedOperations.map(({ method, path }) => `${method.toUpperCase()} ${path}`);
+    const documented = documentedOperations.map(
+      ({ method, path }) => `${method.toUpperCase()} ${path}`
+    );
     expect(documented.sort()).toEqual([...EXPECTED_OPERATIONS].sort());
   });
 

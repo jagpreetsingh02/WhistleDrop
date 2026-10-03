@@ -1,12 +1,6 @@
 'use strict';
 
-const {
-  app,
-  request,
-  VALID_REPORT,
-  loginAsModerator,
-  loginAsAdmin,
-} = require('./setup/helpers');
+const { app, request, VALID_REPORT, loginAsModerator, loginAsAdmin } = require('./setup/helpers');
 const db = require('./setup/testDb');
 const AuditLog = require('../src/models/AuditLog');
 const auditService = require('../src/services/audit.service');
@@ -71,7 +65,9 @@ describe('what gets recorded', () => {
       .patch(`/api/v1/admin/moderators/${targetId}/activate`)
       .set('Authorization', authHeader);
 
-    const entries = await AuditLog.find({ action: /^ADMIN_/ }).sort({ seq: 1 }).lean();
+    const entries = await AuditLog.find({ action: /^ADMIN_/ })
+      .sort({ seq: 1 })
+      .lean();
     expect(entries.map((e) => e.action)).toEqual([
       'ADMIN_CREATE_ACCOUNT',
       'ADMIN_DEACTIVATE_ACCOUNT',
@@ -88,7 +84,9 @@ describe('what gets recorded', () => {
     await request(app)
       .get('/api/v1/moderator/reports/64b7f1a2c3d4e5f6a7b8c9d0')
       .set('Authorization', authHeader);
-    await request(app).post('/api/v1/auth/login').send({ username: 'testmod', password: 'wrong-password' });
+    await request(app)
+      .post('/api/v1/auth/login')
+      .send({ username: 'testmod', password: 'wrong-password' });
 
     const actions = (await AuditLog.find().lean()).map((e) => e.action);
     expect(actions).toEqual(['LOGIN']);
@@ -97,7 +95,9 @@ describe('what gets recorded', () => {
   it('does not show a report when its view cannot be recorded', async () => {
     const { authHeader } = await loginAsModerator();
     await request(app).post('/api/v1/reports').send(VALID_REPORT);
-    const list = await request(app).get('/api/v1/moderator/reports').set('Authorization', authHeader);
+    const list = await request(app)
+      .get('/api/v1/moderator/reports')
+      .set('Authorization', authHeader);
 
     jest.spyOn(auditService, 'record').mockRejectedValueOnce(new Error('audit store down'));
     const res = await request(app)
@@ -117,7 +117,17 @@ describe('privacy of the audit log', () => {
 
     for (const entry of entries) {
       expect(Object.keys(entry).sort()).toEqual(
-        ['_id', 'action', 'createdAt', 'hash', 'moderator', 'prevHash', 'report', 'seq', 'targetModerator'].sort()
+        [
+          '_id',
+          'action',
+          'createdAt',
+          'hash',
+          'moderator',
+          'prevHash',
+          'report',
+          'seq',
+          'targetModerator',
+        ].sort()
       );
     }
   });
@@ -169,7 +179,10 @@ describe('GET /api/v1/admin/audit-log', () => {
       'VIEW_REPORT',
       'LOGIN',
     ]);
-    expect(res.body.data[1].moderator).toMatchObject({ username: 'testmod', displayName: 'Ethics Desk' });
+    expect(res.body.data[1].moderator).toMatchObject({
+      username: 'testmod',
+      displayName: 'Ethics Desk',
+    });
     expect(res.body.data[0]).toMatchObject({ seq: 5, reportId: null, targetModeratorId: null });
     expect(res.body.data[0].hash).toMatch(/^[a-f0-9]{64}$/);
     expect(res.body.data[0].prevHash).toBe(res.body.data[1].hash);

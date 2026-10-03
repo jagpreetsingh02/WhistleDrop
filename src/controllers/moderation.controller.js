@@ -6,7 +6,12 @@ const reportService = require('../services/report.service');
 /** GET /api/v1/moderator/reports — list with optional filters and paging. */
 const listReports = asyncHandler(async (req, res) => {
   const { page, limit, sort, ...filters } = req.validated.query;
-  const { reports, pagination } = await reportService.listReports({ page, limit, sort, ...filters });
+  const { reports, pagination } = await reportService.listReports({
+    page,
+    limit,
+    sort,
+    ...filters,
+  });
 
   res.status(200).json({
     success: true,

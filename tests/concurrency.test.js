@@ -85,7 +85,9 @@ describe('concurrent moderator actions', () => {
 
     // The stored status is the winner's, and only the winner's update exists.
     expect(stored.status).toBe(winner.body.data.status);
-    expect(stored.updates.filter((u) => ['RESOLVED', 'DISMISSED'].includes(u.status))).toHaveLength(1);
+    expect(stored.updates.filter((u) => ['RESOLVED', 'DISMISSED'].includes(u.status))).toHaveLength(
+      1
+    );
   });
 
   it('reports a stale read as 409, not as a silent overwrite', async () => {
@@ -128,7 +130,9 @@ describe('concurrent moderator actions', () => {
 
     const stored = await Report.findById(id).lean();
     const closeIndex = stored.updates.findIndex((u) => u.status === 'DISMISSED');
-    const noteIndex = stored.updates.findIndex((u) => u.message === 'Racing note from another moderator.');
+    const noteIndex = stored.updates.findIndex(
+      (u) => u.message === 'Racing note from another moderator.'
+    );
 
     if (noteRes.status === 201) {
       expect(noteIndex).toBeLessThan(closeIndex);

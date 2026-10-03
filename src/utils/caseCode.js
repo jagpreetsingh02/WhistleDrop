@@ -37,7 +37,9 @@ function generateCaseCode() {
  * paste "wd 4k9tm xq7yb 2nhvr" and still find their case.
  */
 function normalizeCaseCode(caseCode) {
-  return String(caseCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return String(caseCode || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 /**

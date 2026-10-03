@@ -85,7 +85,6 @@ async function verifyChain() {
 
   const cursor = AuditLog.find().sort({ seq: 1 }).lean().cursor();
 
-  // eslint-disable-next-line no-restricted-syntax
   for await (const entry of cursor) {
     let reason = null;
     if (entry.seq !== expectedSeq) reason = 'MISSING_ENTRY';
@@ -138,7 +137,11 @@ function toAuditView(entry) {
     action: entry.action,
     moderator:
       moderator && moderator.username
-        ? { id: moderator._id.toString(), username: moderator.username, displayName: moderator.displayName }
+        ? {
+            id: moderator._id.toString(),
+            username: moderator.username,
+            displayName: moderator.displayName,
+          }
         : { id: idOrNull(moderator) },
     reportId: idOrNull(entry.report),
     targetModeratorId: idOrNull(entry.targetModerator),

@@ -57,7 +57,9 @@ describe('admin route protection', () => {
 
   it('lets an admin use moderator routes as well', async () => {
     const { authHeader } = await loginAsAdmin();
-    const res = await request(app).get('/api/v1/moderator/reports').set('Authorization', authHeader);
+    const res = await request(app)
+      .get('/api/v1/moderator/reports')
+      .set('Authorization', authHeader);
     expect(res.status).toBe(200);
   });
 });
@@ -151,7 +153,9 @@ describe('PATCH /api/v1/admin/moderators/:id/(de)activate', () => {
     expect(off.status).toBe(200);
     expect(off.body.data.isActive).toBe(false);
 
-    const blocked = await request(app).get('/api/v1/moderator/reports').set('Authorization', modHeader);
+    const blocked = await request(app)
+      .get('/api/v1/moderator/reports')
+      .set('Authorization', modHeader);
     expect(blocked.status).toBe(401);
 
     const login = await request(app)
@@ -163,7 +167,9 @@ describe('PATCH /api/v1/admin/moderators/:id/(de)activate', () => {
     expect(on.status).toBe(200);
     expect(on.body.data.isActive).toBe(true);
 
-    const restored = await request(app).get('/api/v1/moderator/reports').set('Authorization', modHeader);
+    const restored = await request(app)
+      .get('/api/v1/moderator/reports')
+      .set('Authorization', modHeader);
     expect(restored.status).toBe(200);
   });
 

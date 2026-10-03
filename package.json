@@ -5,9 +5,14 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "dev": "node --watch src/server.js",
     "test": "cross-env NODE_ENV=test jest --runInBand --detectOpenHandles --forceExit",
     "test:watch": "cross-env NODE_ENV=test jest --runInBand --watch",
+    "test:coverage": "cross-env NODE_ENV=test jest --runInBand --forceExit --coverage",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "create:moderator": "node scripts/createModerator.js"
   },
   "keywords": [
@@ -32,10 +37,17 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "cross-env": "^10.1.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
     "jest": "^30.5.2",
     "mongodb-memory-server": "^11.3.0",
-    "nodemon": "^3.1.14",
+    "prettier": "^3.9.9",
     "supertest": "^7.2.2"
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }

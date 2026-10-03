@@ -21,19 +21,9 @@ const router = express.Router();
 // Applied before the limiter and validation so 4xx responses are covered too.
 router.use(noStore);
 
-router.post(
-  '/',
-  submitReportLimiter,
-  validate({ body: submitReportSchema }),
-  submitReport
-);
+router.post('/', submitReportLimiter, validate({ body: submitReportSchema }), submitReport);
 
-router.get(
-  '/:caseCode',
-  trackLimiter,
-  validate({ params: trackReportParamsSchema }),
-  trackReport
-);
+router.get('/:caseCode', trackLimiter, validate({ params: trackReportParamsSchema }), trackReport);
 
 router.post(
   '/:caseCode/messages',

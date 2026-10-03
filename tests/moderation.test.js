@@ -39,7 +39,9 @@ describe('GET /api/v1/moderator/reports', () => {
     await seedReport();
     await seedReport({ category: 'TECHNICAL' });
 
-    const res = await request(app).get('/api/v1/moderator/reports').set('Authorization', authHeader);
+    const res = await request(app)
+      .get('/api/v1/moderator/reports')
+      .set('Authorization', authHeader);
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
@@ -51,7 +53,9 @@ describe('GET /api/v1/moderator/reports', () => {
 
   it('never includes the case code hash in the list', async () => {
     await seedReport();
-    const res = await request(app).get('/api/v1/moderator/reports').set('Authorization', authHeader);
+    const res = await request(app)
+      .get('/api/v1/moderator/reports')
+      .set('Authorization', authHeader);
 
     expect(JSON.stringify(res.body)).not.toMatch(/caseCodeHash/i);
   });
@@ -207,7 +211,10 @@ describe('PATCH /api/v1/moderator/reports/:id/status — workflow enforcement', 
 
   it('allows dismissing straight from SUBMITTED', async () => {
     const { id } = await seedReport();
-    const res = await patchStatus(id, { status: 'DISMISSED', message: 'Duplicate of an open case.' });
+    const res = await patchStatus(id, {
+      status: 'DISMISSED',
+      message: 'Duplicate of an open case.',
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('DISMISSED');
@@ -349,7 +356,10 @@ describe('update visibility', () => {
 
   it('accepts INTERNAL (case-insensitive) and shows it to moderators', async () => {
     const { id } = await seedReport();
-    const res = await addNote(id, { message: 'Suspect this is the payroll team.', visibility: 'internal' });
+    const res = await addNote(id, {
+      message: 'Suspect this is the payroll team.',
+      visibility: 'internal',
+    });
 
     expect(res.status).toBe(201);
     expect(res.body.message).toBe('Internal note added');
@@ -367,7 +377,10 @@ describe('update visibility', () => {
   it('never sends an INTERNAL note to the reporter', async () => {
     const { id, caseCode } = await seedReport();
     await addNote(id, { message: 'Public: we have received your report.' });
-    await addNote(id, { message: 'INTERNAL-ONLY: cross-check with badge logs.', visibility: 'INTERNAL' });
+    await addNote(id, {
+      message: 'INTERNAL-ONLY: cross-check with badge logs.',
+      visibility: 'INTERNAL',
+    });
 
     const tracked = await request(app).get(`/api/v1/reports/${caseCode}`);
 
@@ -385,7 +398,10 @@ describe('update visibility', () => {
     const before = await request(app).get(`/api/v1/reports/${caseCode}`);
 
     await new Promise((resolve) => setTimeout(resolve, 20));
-    await addNote(id, { message: 'Private discussion between moderators.', visibility: 'INTERNAL' });
+    await addNote(id, {
+      message: 'Private discussion between moderators.',
+      visibility: 'INTERNAL',
+    });
 
     const after = await request(app).get(`/api/v1/reports/${caseCode}`);
     expect(after.body.data.lastUpdatedAt).toBe(before.body.data.lastUpdatedAt);

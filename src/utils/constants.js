@@ -1,21 +1,10 @@
 'use strict';
 
 /** Categories a reporter can file a report under. */
-const CATEGORIES = Object.freeze([
-  'SECURITY',
-  'HARASSMENT',
-  'CORRUPTION',
-  'TECHNICAL',
-  'OTHER',
-]);
+const CATEGORIES = Object.freeze(['SECURITY', 'HARASSMENT', 'CORRUPTION', 'TECHNICAL', 'OTHER']);
 
 /** Lifecycle states of a report. */
-const STATUSES = Object.freeze([
-  'SUBMITTED',
-  'UNDER_REVIEW',
-  'RESOLVED',
-  'DISMISSED',
-]);
+const STATUSES = Object.freeze(['SUBMITTED', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED']);
 
 const STATUS = Object.freeze({
   SUBMITTED: 'SUBMITTED',

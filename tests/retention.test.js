@@ -24,7 +24,9 @@ beforeEach(async () => {
 // Reports filed in the same time bucket have no meaningful order, so a report
 // is found by its (unique per test) category rather than by list position.
 async function seedReport(category = 'SECURITY') {
-  await request(app).post('/api/v1/reports').send({ ...VALID_REPORT, category });
+  await request(app)
+    .post('/api/v1/reports')
+    .send({ ...VALID_REPORT, category });
   const list = await request(app)
     .get(`/api/v1/moderator/reports?category=${category}`)
     .set('Authorization', authHeader);

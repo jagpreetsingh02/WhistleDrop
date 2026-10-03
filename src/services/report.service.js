@@ -8,13 +8,7 @@ const { coarsenDate, coarseObjectId } = require('../utils/timeBuckets');
 const { scanForPii } = require('../utils/piiScanner');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
 const auditService = require('./audit.service');
-const {
-  STATUS,
-  STATUSES,
-  VISIBILITY,
-  AUDIT_ACTION,
-  MESSAGE_FROM,
-} = require('../utils/constants');
+const { STATUS, STATUSES, VISIBILITY, AUDIT_ACTION, MESSAGE_FROM } = require('../utils/constants');
 
 const MAX_CASE_CODE_ATTEMPTS = 5;
 const PREVIEW_LENGTH = 140;
@@ -98,7 +92,8 @@ function toModeratorView(report) {
       from: message.from,
       body: message.body,
       createdAt: message.createdAt,
-      moderator: message.from === MESSAGE_FROM.MODERATOR ? formatModerator(message.moderator) : null,
+      moderator:
+        message.from === MESSAGE_FROM.MODERATOR ? formatModerator(message.moderator) : null,
     })),
     updates: report.updates.map((update) => ({
       id: update._id.toString(),
@@ -131,7 +126,15 @@ function toModeratorSummary(report) {
 }
 
 /** Echoes the applied filters back in list metadata (null = not applied). */
-function describeFilters({ status, category, q, from, toExclusive, hasEvidence, awaitingReporter }) {
+function describeFilters({
+  status,
+  category,
+  q,
+  from,
+  toExclusive,
+  hasEvidence,
+  awaitingReporter,
+}) {
   const boolOrNull = (value) => (typeof value === 'boolean' ? value : null);
   return {
     status: status || null,
@@ -175,6 +178,8 @@ async function createReport({ category, description, evidenceUrl = null }) {
   for (let attempt = 0; attempt < MAX_CASE_CODE_ATTEMPTS; attempt += 1) {
     const caseCode = generateCaseCode();
     try {
+      // Retries must run one after another: each depends on the last failing.
+      // eslint-disable-next-line no-await-in-loop
       const report = await Report.create({
         _id: coarseObjectId(submittedAt),
         createdAt: submittedAt,
@@ -408,7 +413,11 @@ async function addStatusUpdate({ reportId, moderatorId, message, visibility = VI
     return rejectStaleWrite(reportId);
   }
 
-  await auditService.record({ moderatorId, action: AUDIT_ACTION.ADD_UPDATE, reportId: updated._id });
+  await auditService.record({
+    moderatorId,
+    action: AUDIT_ACTION.ADD_UPDATE,
+    reportId: updated._id,
+  });
   return updated;
 }
 
@@ -422,7 +431,9 @@ async function rejectMessageWrite(filter) {
     throw AppError.notFound('No case found for that code. Check the code and try again.');
   }
   if (isTerminal(report.status)) {
-    throw AppError.conflict(`This case is closed (${report.status}) and no longer accepts messages`);
+    throw AppError.conflict(
+      `This case is closed (${report.status}) and no longer accepts messages`
+    );
   }
   throw AppError.conflict(
     `This conversation has reached its limit of ${MAX_MESSAGES_PER_REPORT} messages`

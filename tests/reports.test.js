@@ -39,11 +39,10 @@ describe('POST /api/v1/reports — anonymous submission', () => {
   });
 
   it('gives every report a different case code', async () => {
-    const codes = [];
-    for (let i = 0; i < 5; i += 1) {
-      const res = await request(app).post('/api/v1/reports').send(VALID_REPORT);
-      codes.push(res.body.data.caseCode);
-    }
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => request(app).post('/api/v1/reports').send(VALID_REPORT))
+    );
+    const codes = responses.map((res) => res.body.data.caseCode);
     expect(new Set(codes).size).toBe(5);
   });
 
