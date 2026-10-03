@@ -15,11 +15,13 @@ function extractBearerToken(req) {
 }
 
 /**
- * Protects moderator routes.
+ * Authenticates staff (moderators and admins).
  *
- * Verifies the JWT, then re-loads the moderator from the database on every
+ * Verifies the JWT, then re-loads the account from the database on every
  * request. That extra read means a deactivated account loses access
- * immediately rather than when its token happens to expire.
+ * immediately rather than when its token happens to expire, and a token whose
+ * role claim no longer matches the account (promoted or demoted since login)
+ * is rejected instead of carrying stale privileges for up to JWT_EXPIRES_IN.
  */
 const requireModerator = asyncHandler(async (req, _res, next) => {
   const token = extractBearerToken(req);
@@ -45,8 +47,28 @@ const requireModerator = asyncHandler(async (req, _res, next) => {
     throw AppError.unauthorized('Moderator account is no longer active');
   }
 
+  if (payload.role !== moderator.role) {
+    throw AppError.unauthorized('Your role has changed since you logged in. Please log in again.');
+  }
+
   req.moderator = moderator;
   return next();
 });
 
-module.exports = { requireModerator, extractBearerToken };
+/**
+ * Restricts a route to the given roles. Must run after requireModerator; it
+ * checks the role on the freshly loaded account, never the token claim alone.
+ */
+function requireRole(...roles) {
+  return (req, _res, next) => {
+    if (!req.moderator) {
+      return next(AppError.unauthorized());
+    }
+    if (!roles.includes(req.moderator.role)) {
+      return next(AppError.forbidden(`This action requires the ${roles.join(' or ')} role`));
+    }
+    return next();
+  };
+}
+
+module.exports = { requireModerator, requireRole, extractBearerToken };

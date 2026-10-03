@@ -2,12 +2,13 @@
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { ROLES, ROLE } = require('../utils/constants');
 
 const SALT_ROUNDS = 12;
 
 /**
- * A moderator account. Moderators are the only identified actors in the
- * system; reporters never have one.
+ * A staff account (role `moderator` or `admin`). Staff are the only
+ * identified actors in the system; reporters never have an account.
  */
 const moderatorSchema = new mongoose.Schema(
   {
@@ -32,6 +33,11 @@ const moderatorSchema = new mongoose.Schema(
       required: true,
       trim: true,
       maxlength: 80,
+    },
+    role: {
+      type: String,
+      enum: ROLES,
+      default: ROLE.MODERATOR,
     },
     isActive: {
       type: Boolean,

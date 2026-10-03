@@ -1,6 +1,6 @@
 'use strict';
 
-const { CATEGORIES, STATUSES, VISIBILITIES } = require('../utils/constants');
+const { CATEGORIES, STATUSES, VISIBILITIES, ROLES } = require('../utils/constants');
 const { PII_WARNING_CODES } = require('../utils/piiScanner');
 const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
 
@@ -52,6 +52,7 @@ const openApiSpec = {
     { name: 'Reports (public)', description: 'Anonymous submission and tracking' },
     { name: 'Auth', description: 'Moderator authentication' },
     { name: 'Moderation', description: 'Protected moderator operations' },
+    { name: 'Admin', description: 'Staff account management — admin role only' },
   ],
   components: {
     headers: {
@@ -243,6 +244,55 @@ const openApiSpec = {
         },
       },
 
+      Role: { type: 'string', enum: [...ROLES], example: 'moderator' },
+
+      StaffAccount: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: '6ab17466f6cabe35b17ce5cc' },
+          username: { type: 'string', example: 'neha.r' },
+          displayName: { type: 'string', example: 'Compliance Desk' },
+          role: { $ref: '#/components/schemas/Role' },
+          isActive: { type: 'boolean', example: true },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+
+      CreateStaffRequest: {
+        type: 'object',
+        required: ['username', 'password'],
+        additionalProperties: false,
+        properties: {
+          username: {
+            type: 'string',
+            minLength: 3,
+            maxLength: 40,
+            pattern: '^[a-z0-9._-]+$',
+            description: 'Stored lower-case.',
+            example: 'neha.r',
+          },
+          password: {
+            type: 'string',
+            format: 'password',
+            minLength: 12,
+            maxLength: 128,
+            example: 'An0ther-Long-Passphrase',
+          },
+          displayName: { type: 'string', maxLength: 80, example: 'Compliance Desk' },
+          role: { allOf: [{ $ref: '#/components/schemas/Role' }], default: 'moderator' },
+        },
+      },
+
+      Pagination: {
+        type: 'object',
+        properties: {
+          page: { type: 'integer', example: 1 },
+          limit: { type: 'integer', example: 20 },
+          total: { type: 'integer', example: 2 },
+          totalPages: { type: 'integer', example: 1 },
+        },
+      },
+
       LoginRequest: {
         type: 'object',
         required: ['username', 'password'],
@@ -269,6 +319,7 @@ const openApiSpec = {
                   id: { type: 'string' },
                   username: { type: 'string' },
                   displayName: { type: 'string' },
+                  role: { $ref: '#/components/schemas/Role' },
                 },
               },
             },
@@ -694,6 +745,120 @@ const openApiSpec = {
             },
           },
           401: errorResponse('Missing or invalid token'),
+        },
+      },
+    },
+
+    '/admin/moderators': {
+      post: {
+        tags: ['Admin'],
+        summary: 'Create a moderator or admin account',
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/CreateStaffRequest' } },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Account created',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    message: { type: 'string', example: 'Account "neha.r" created' },
+                    data: { $ref: '#/components/schemas/StaffAccount' },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Validation failed'),
+          401: errorResponse('Missing, invalid or stale token'),
+          403: errorResponse('Caller is not an admin', {
+            success: false,
+            error: { message: 'This action requires the admin role' },
+          }),
+          409: errorResponse('Username already taken', {
+            success: false,
+            error: { message: 'Moderator "neha.r" already exists' },
+          }),
+        },
+      },
+      get: {
+        tags: ['Admin'],
+        summary: 'List staff accounts',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Paginated staff accounts (never includes password hashes)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: { type: 'array', items: { $ref: '#/components/schemas/StaffAccount' } },
+                    meta: { $ref: '#/components/schemas/Pagination' },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Invalid paging values'),
+          401: errorResponse('Missing, invalid or stale token'),
+          403: errorResponse('Caller is not an admin'),
+        },
+      },
+    },
+
+    '/admin/moderators/{id}/deactivate': {
+      patch: {
+        tags: ['Admin'],
+        summary: 'Deactivate an account (takes effect on its very next request)',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'Account deactivated' },
+          400: errorResponse('Malformed id'),
+          401: errorResponse('Missing, invalid or stale token'),
+          403: errorResponse('Caller is not an admin, or is trying to deactivate themselves', {
+            success: false,
+            error: { message: 'Admins cannot deactivate their own account' },
+          }),
+          404: errorResponse('Account not found'),
+          409: errorResponse('Account is already inactive', {
+            success: false,
+            error: { message: 'Moderator account is already inactive' },
+          }),
+        },
+      },
+    },
+
+    '/admin/moderators/{id}/activate': {
+      patch: {
+        tags: ['Admin'],
+        summary: 'Reactivate an account',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'Account activated' },
+          400: errorResponse('Malformed id'),
+          401: errorResponse('Missing, invalid or stale token'),
+          403: errorResponse('Caller is not an admin'),
+          404: errorResponse('Account not found'),
+          409: errorResponse('Account is already active'),
         },
       },
     },

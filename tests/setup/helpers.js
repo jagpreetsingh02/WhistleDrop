@@ -35,4 +35,24 @@ async function loginAsModerator(overrides = {}) {
   };
 }
 
-module.exports = { app, request, VALID_REPORT, MODERATOR_CREDENTIALS, loginAsModerator };
+const ADMIN_CREDENTIALS = {
+  username: 'testadmin',
+  password: 'Adm1nPassphrase!',
+  displayName: 'Integrity Office',
+  role: 'admin',
+};
+
+/** Same as loginAsModerator, for an account with the admin role. */
+function loginAsAdmin(overrides = {}) {
+  return loginAsModerator({ ...ADMIN_CREDENTIALS, ...overrides });
+}
+
+module.exports = {
+  app,
+  request,
+  VALID_REPORT,
+  MODERATOR_CREDENTIALS,
+  ADMIN_CREDENTIALS,
+  loginAsModerator,
+  loginAsAdmin,
+};

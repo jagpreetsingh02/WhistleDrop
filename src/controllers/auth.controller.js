@@ -19,11 +19,7 @@ const login = asyncHandler(async (req, res) => {
 const me = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
-    data: {
-      id: req.moderator._id.toString(),
-      username: req.moderator.username,
-      displayName: req.moderator.displayName,
-    },
+    data: authService.toAccountView(req.moderator),
   });
 });
 

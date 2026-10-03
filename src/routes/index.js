@@ -4,6 +4,7 @@ const express = require('express');
 const reportRoutes = require('./report.routes');
 const authRoutes = require('./auth.routes');
 const moderatorRoutes = require('./moderator.routes');
+const adminRoutes = require('./admin.routes');
 const { CATEGORIES, STATUSES } = require('../utils/constants');
 const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
 
@@ -32,5 +33,6 @@ router.get('/meta', (_req, res) => {
 router.use('/reports', reportRoutes);
 router.use('/auth', authRoutes);
 router.use('/moderator', moderatorRoutes);
+router.use('/admin', adminRoutes);
 
 module.exports = router;

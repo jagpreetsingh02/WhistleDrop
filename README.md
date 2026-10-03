@@ -82,14 +82,16 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 validates every variable with Zod and **exits with a clear message** if
 something is missing or too weak — a bad config fails at boot, not at 3am.
 
-### 3. Create a moderator
+### 3. Create the first admin
 
 There is no public sign-up endpoint (see
-[design decisions](#assumptions-and-design-decisions)). Accounts are
-provisioned from the CLI:
+[design decisions](#assumptions-and-design-decisions)). The first account is
+provisioned from the CLI; after that, admins manage accounts through
+`/api/v1/admin`:
 
 ```bash
-npm run create:moderator -- --username alice --password "Str0ngPassphrase!" --name "Ethics Desk"
+npm run create:moderator -- --username root --password "Adm1n-Long-Passphrase" --name "Integrity Office" --role admin
+npm run create:moderator -- --username alice --password "Str0ngPassphrase!" --name "Ethics Desk"   # role defaults to moderator
 ```
 
 > **Deploying behind a load balancer?** Set `TRUST_PROXY=1` (or the number of
@@ -227,6 +229,17 @@ Base URL: `/api/v1`
 | `POST` | `/moderator/reports/:id/updates` | Add a note without changing status |
 | `GET` | `/moderator/stats` | Report counts per status |
 
+### Admin — `Authorization: Bearer <token>` with the `admin` role
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/admin/moderators` | Create a moderator or admin account |
+| `GET` | `/admin/moderators` | List staff accounts — `?page=&limit=` |
+| `PATCH` | `/admin/moderators/:id/deactivate` | Deactivate an account (effective on its next request) |
+| `PATCH` | `/admin/moderators/:id/activate` | Reactivate an account |
+
+Admins can also use every moderator route. Moderators get `403` on admin routes.
+
 ### Status codes used
 
 | Code | When |
@@ -234,7 +247,8 @@ Base URL: `/api/v1`
 | `200 OK` | Successful read or status change |
 | `201 Created` | Report submitted, or update added |
 | `400 Bad Request` | Validation failed, malformed JSON, malformed id or case code |
-| `401 Unauthorized` | Missing, malformed, expired, forged token; bad credentials |
+| `401 Unauthorized` | Missing, malformed, expired, forged token; bad credentials; role changed since login |
+| `403 Forbidden` | Moderator calling an admin route; admin deactivating themselves |
 | `404 Not Found` | Unknown case code, unknown report id, unknown route |
 | `409 Conflict` | Status is already the requested one; update on a closed case; another moderator changed the report concurrently |
 | `422 Unprocessable Entity` | Well-formed request that breaks the status workflow |
@@ -733,7 +747,8 @@ hidden.
 | Password storage | bcrypt, cost factor 12; the hash is `select: false` and stripped from JSON |
 | User enumeration | Unknown username, wrong password and deactivated account all return the same `401` message |
 | Timing attacks | A dummy bcrypt comparison runs when the username does not exist, so failed logins take the same time |
-| No self-registration | Moderator accounts are created by an operator via CLI |
+| No self-registration | The first admin is created via CLI; further accounts only by an admin |
+| Roles | `moderator` and `admin`. The role is re-checked against the database on every request: a token whose `role` claim no longer matches the account is rejected with `401`, so a demotion takes effect immediately and a promotion requires a fresh login |
 | Input validation | Zod on body, query and params; unknown keys rejected |
 | Injection | Validated-and-typed input into Mongoose; no string-built queries, no `$where` |
 | XSS via stored links | `evidenceUrl` is restricted to `http(s)`, blocking `javascript:` and `data:` payloads |
@@ -821,9 +836,14 @@ at runtime rather than hard-coding them.
 A client can tell "you sent nonsense" from "that move isn't allowed", and the
 `422` body lists the transitions that *are* allowed.
 
-**10. Moderators are a single flat role.**
-An admin/moderator split was not required. The JWT already carries a `role`
-claim, so adding one later is an authorization middleware, not a redesign.
+**10. Two roles, checked against the database.**
+`admin` can do everything a `moderator` can, plus manage accounts. The JWT's
+`role` claim is compared with the stored account on every request, so a token
+can never carry privileges the account no longer has. Admins cannot deactivate
+themselves — which also guarantees at least one active admin always remains,
+because the last one has nobody else who could remove them. Self-deactivation
+is a `403` (an action this caller may not take), while re-deactivating an
+inactive account is a `409` (the state already is what was asked for).
 
 **11. JWTs are stateless with a 2-hour expiry.**
 No token blocklist. Immediate revocation is instead achieved by deactivating the

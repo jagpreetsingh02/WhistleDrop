@@ -32,6 +32,14 @@ const VISIBILITY = Object.freeze({
 
 const VISIBILITIES = Object.freeze(Object.values(VISIBILITY));
 
+/** Staff roles. Admins can do everything moderators can, plus manage accounts. */
+const ROLE = Object.freeze({
+  ADMIN: 'admin',
+  MODERATOR: 'moderator',
+});
+
+const ROLES = Object.freeze(Object.values(ROLE));
+
 const CASE_CODE_PREFIX = 'WD';
 
 /** Claims pinned on every moderator JWT, checked again on verification. */
@@ -44,6 +52,8 @@ module.exports = {
   STATUS,
   VISIBILITY,
   VISIBILITIES,
+  ROLE,
+  ROLES,
   CASE_CODE_PREFIX,
   JWT_ISSUER,
   JWT_AUDIENCE,

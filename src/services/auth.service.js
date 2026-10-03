@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const env = require('../config/env');
 const Moderator = require('../models/Moderator');
 const AppError = require('../utils/AppError');
-const { JWT_ISSUER, JWT_AUDIENCE } = require('../utils/constants');
+const { JWT_ISSUER, JWT_AUDIENCE, ROLE } = require('../utils/constants');
 
 /**
  * A pre-computed hash of a throwaway password. When a login arrives for a
@@ -17,7 +17,7 @@ const DUMMY_HASH = bcrypt.hashSync('timing-attack-mitigation-placeholder', 12);
 
 function signToken(moderator) {
   return jwt.sign(
-    { sub: moderator._id.toString(), role: 'moderator' },
+    { sub: moderator._id.toString(), role: moderator.role },
     env.jwt.secret,
     {
       expiresIn: env.jwt.expiresIn,
@@ -50,34 +50,46 @@ async function login({ username, password }) {
   return {
     token: signToken(moderator),
     expiresIn: env.jwt.expiresIn,
-    moderator: {
-      id: moderator._id.toString(),
-      username: moderator.username,
-      displayName: moderator.displayName,
-    },
+    moderator: toAccountView(moderator),
+  };
+}
+
+/** Public shape of a staff account. Never includes the password hash. */
+function toAccountView(moderator) {
+  return {
+    id: moderator._id.toString(),
+    username: moderator.username,
+    displayName: moderator.displayName,
+    role: moderator.role,
   };
 }
 
 /**
- * Creates a moderator account. There is no public registration endpoint by
- * design — accounts are provisioned by an operator running
- * `npm run create:moderator`, so nobody can self-register into the queue of
- * sensitive reports.
+ * Creates a staff account. There is no public registration endpoint by
+ * design — accounts are provisioned by an operator (`npm run create:moderator`)
+ * or by an admin through the admin API, so nobody can self-register into the
+ * queue of sensitive reports.
+ *
+ * Uniqueness is enforced by the database index rather than a prior lookup, so
+ * two simultaneous requests for the same username cannot both succeed.
  */
-async function createModerator({ username, password, displayName }) {
+async function createModerator({ username, password, displayName, role = ROLE.MODERATOR }) {
   const normalizedUsername = String(username).trim().toLowerCase();
-
-  const existing = await Moderator.findOne({ username: normalizedUsername });
-  if (existing) {
-    throw AppError.conflict(`Moderator "${normalizedUsername}" already exists`);
-  }
-
   const passwordHash = await Moderator.hashPassword(password);
-  return Moderator.create({
-    username: normalizedUsername,
-    passwordHash,
-    displayName: displayName || normalizedUsername,
-  });
+
+  try {
+    return await Moderator.create({
+      username: normalizedUsername,
+      passwordHash,
+      displayName: displayName || normalizedUsername,
+      role,
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      throw AppError.conflict(`Moderator "${normalizedUsername}" already exists`);
+    }
+    throw error;
+  }
 }
 
-module.exports = { login, createModerator, signToken };
+module.exports = { login, createModerator, signToken, toAccountView };
