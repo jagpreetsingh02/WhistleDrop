@@ -33,18 +33,32 @@ const openApiSpec = {
       'WhistleDrop accepts anonymous reports and lets the reporter follow the case',
       'using a one-time case code — no account, no email, no session.',
       '',
-      '### How to use this page',
-      '1. `POST /reports` and copy the `caseCode` from the response.',
-      '2. `GET /reports/{caseCode}` to see status and moderator updates.',
-      '3. `POST /auth/login` as a moderator, click **Authorize**, paste the token.',
-      '4. Work the queue under `/moderator/*`.',
+      '### Try it',
+      '1. `POST /reports` and copy the `caseCode` from the response (shown only once).',
+      '2. `GET /reports/{caseCode}` to see status, public updates and messages.',
+      '3. `POST /auth/login` as a moderator or admin, click **Authorize**, paste the token.',
+      '4. Work the queue under `/moderator/*`: search, review, change status, add notes,',
+      '   ask the reporter a question.',
+      '5. Reply as the reporter with `POST /reports/{caseCode}/messages`.',
+      '6. As an admin, manage accounts and check `GET /admin/audit-log/verify`.',
+      '',
+      '### Roles',
+      '- **Reporter** — anonymous; the case code is the only credential.',
+      '- **moderator** — reads and works reports (`/moderator/*`).',
+      '- **admin** — everything a moderator can do, plus `/admin/*`.',
       '',
       '### Privacy',
-      'No IP address, user-agent, email or account is stored against a report.',
-      'Only a SHA-256 hash of the case code is persisted, so the code cannot be',
-      'recovered from the database — if a reporter loses it, the case is closed to them.',
+      'No IP address, user-agent, email or account is stored against a report. Only a',
+      'SHA-256 hash of the case code is persisted. Reporter timestamps are rounded down',
+      'to a 15-minute bucket, closed reports are deleted after a retention period, and',
+      'reporter-facing responses never reveal which moderator acted.',
+      '',
+      '### Errors',
+      'Every error uses `{ success: false, error: { message, details? } }`.',
+      '`400` malformed input · `401` not authenticated · `403` wrong role ·',
+      '`404` unknown · `409` state conflict · `422` workflow violation · `429` rate limited.',
     ].join('\n'),
-    license: { name: 'MIT' },
+    license: { name: 'MIT', url: 'https://opensource.org/licenses/MIT' },
   },
   servers: [{ url: '/api/v1', description: 'Current server' }],
   tags: [
@@ -152,8 +166,10 @@ const openApiSpec = {
         properties: {
           message: { type: 'string', example: 'A moderator has started reviewing this case.' },
           status: {
-            allOf: [{ $ref: '#/components/schemas/Status' }],
+            type: 'string',
+            enum: [...STATUSES, null],
             nullable: true,
+            example: 'UNDER_REVIEW',
             description: 'Status this update moved the case to, or null for a note.',
           },
           createdAt: { type: 'string', format: 'date-time' },
@@ -483,8 +499,8 @@ const openApiSpec = {
             properties: {
               message: { type: 'string' },
               details: {
-                description: 'Field-level validation errors, or workflow context on a 422.',
-                nullable: true,
+                description:
+                  'Present only when there is more to say: field-level validation errors (array), or conflict/workflow context (object).',
                 oneOf: [
                   {
                     type: 'array',
@@ -509,6 +525,9 @@ const openApiSpec = {
   paths: {
     '/health': {
       get: {
+        operationId: 'getHealth',
+        // Public: no authentication, by design.
+        security: [],
         tags: ['Meta'],
         summary: 'Liveness probe',
         responses: {
@@ -518,12 +537,16 @@ const openApiSpec = {
               'application/json': { example: { success: true, data: { status: 'ok' } } },
             },
           },
+          429: errorResponse('Too many requests'),
         },
       },
     },
 
     '/meta': {
       get: {
+        operationId: 'getMeta',
+        // Public: no authentication, by design.
+        security: [],
         tags: ['Meta'],
         summary: 'Categories, statuses and the status workflow',
         responses: {
@@ -542,12 +565,16 @@ const openApiSpec = {
               },
             },
           },
+          429: errorResponse('Too many requests'),
         },
       },
     },
 
     '/reports': {
       post: {
+        operationId: 'submitReport',
+        // Public: no authentication, by design.
+        security: [],
         tags: ['Reports (public)'],
         summary: 'Submit an anonymous report',
         description:
@@ -594,6 +621,9 @@ const openApiSpec = {
 
     '/reports/{caseCode}': {
       get: {
+        operationId: 'trackReport',
+        // Public: no authentication, by design.
+        security: [],
         tags: ['Reports (public)'],
         summary: 'Track a case with its code',
         description:
@@ -638,6 +668,9 @@ const openApiSpec = {
 
     '/reports/{caseCode}/messages': {
       post: {
+        operationId: 'sendReporterMessage',
+        // Public: no authentication, by design.
+        security: [],
         tags: ['Reports (public)'],
         summary: 'Reply to moderators anonymously',
         description:
@@ -706,6 +739,9 @@ const openApiSpec = {
 
     '/auth/login': {
       post: {
+        operationId: 'login',
+        // Public: no authentication, by design.
+        security: [],
         tags: ['Auth'],
         summary: 'Moderator login',
         requestBody: {
@@ -733,11 +769,33 @@ const openApiSpec = {
 
     '/auth/me': {
       get: {
+        operationId: 'getCurrentAccount',
         tags: ['Auth'],
         summary: 'Current moderator profile',
         security: [{ bearerAuth: [] }],
         responses: {
-          200: { description: 'The moderator the token belongs to' },
+          200: {
+            description: 'The account the token belongs to',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'string', example: '6ab17466f6cabe35b17ce5cc' },
+                        username: { type: 'string', example: 'alice' },
+                        displayName: { type: 'string', example: 'Ethics Desk' },
+                        role: { $ref: '#/components/schemas/Role' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           401: errorResponse('Missing, invalid or expired token'),
         },
       },
@@ -745,6 +803,7 @@ const openApiSpec = {
 
     '/moderator/reports': {
       get: {
+        operationId: 'listReports',
         tags: ['Moderation'],
         summary: 'List, search and filter reports',
         description:
@@ -856,6 +915,7 @@ const openApiSpec = {
 
     '/moderator/reports/{id}': {
       get: {
+        operationId: 'getReport',
         tags: ['Moderation'],
         summary: 'Read one report in full',
         security: [{ bearerAuth: [] }],
@@ -884,6 +944,7 @@ const openApiSpec = {
 
     '/moderator/reports/{id}/status': {
       patch: {
+        operationId: 'updateReportStatus',
         tags: ['Moderation'],
         summary: 'Move a report to the next status',
         description:
@@ -943,6 +1004,7 @@ const openApiSpec = {
 
     '/moderator/reports/{id}/updates': {
       post: {
+        operationId: 'addReportUpdate',
         tags: ['Moderation'],
         summary: 'Add a public update or an internal note without changing status',
         description:
@@ -956,7 +1018,21 @@ const openApiSpec = {
           },
         },
         responses: {
-          201: { description: 'Update added' },
+          201: {
+            description: 'Update or internal note added; returns the full report',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    message: { type: 'string', example: 'Internal note added' },
+                    data: { $ref: '#/components/schemas/ReportDetail' },
+                  },
+                },
+              },
+            },
+          },
           400: errorResponse('Validation failed'),
           401: errorResponse('Missing or invalid token'),
           404: errorResponse('Report not found'),
@@ -970,6 +1046,7 @@ const openApiSpec = {
 
     '/moderator/reports/{id}/messages': {
       post: {
+        operationId: 'sendModeratorMessage',
         tags: ['Moderation'],
         summary: 'Ask the reporter a question',
         description:
@@ -1008,6 +1085,7 @@ const openApiSpec = {
 
     '/moderator/stats': {
       get: {
+        operationId: 'getReportStats',
         tags: ['Moderation'],
         summary: 'Report counts per status',
         security: [{ bearerAuth: [] }],
@@ -1030,6 +1108,7 @@ const openApiSpec = {
 
     '/admin/moderators': {
       post: {
+        operationId: 'createStaffAccount',
         tags: ['Admin'],
         summary: 'Create a moderator or admin account',
         security: [{ bearerAuth: [] }],
@@ -1068,6 +1147,7 @@ const openApiSpec = {
         },
       },
       get: {
+        operationId: 'listStaffAccounts',
         tags: ['Admin'],
         summary: 'List staff accounts',
         security: [{ bearerAuth: [] }],
@@ -1104,12 +1184,27 @@ const openApiSpec = {
 
     '/admin/moderators/{id}/deactivate': {
       patch: {
+        operationId: 'deactivateStaffAccount',
         tags: ['Admin'],
         summary: 'Deactivate an account (takes effect on its very next request)',
         security: [{ bearerAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
-          200: { description: 'Account deactivated' },
+          200: {
+            description: 'Account deactivated',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    message: { type: 'string', example: 'Account "neha.r" deactivated' },
+                    data: { $ref: '#/components/schemas/StaffAccount' },
+                  },
+                },
+              },
+            },
+          },
           400: errorResponse('Malformed id'),
           401: errorResponse('Missing, invalid or stale token'),
           403: errorResponse('Caller is not an admin, or is trying to deactivate themselves', {
@@ -1127,12 +1222,27 @@ const openApiSpec = {
 
     '/admin/moderators/{id}/activate': {
       patch: {
+        operationId: 'activateStaffAccount',
         tags: ['Admin'],
         summary: 'Reactivate an account',
         security: [{ bearerAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
-          200: { description: 'Account activated' },
+          200: {
+            description: 'Account activated',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    message: { type: 'string', example: 'Account "neha.r" activated' },
+                    data: { $ref: '#/components/schemas/StaffAccount' },
+                  },
+                },
+              },
+            },
+          },
           400: errorResponse('Malformed id'),
           401: errorResponse('Missing, invalid or stale token'),
           403: errorResponse('Caller is not an admin'),
@@ -1144,6 +1254,7 @@ const openApiSpec = {
 
     '/admin/audit-log': {
       get: {
+        operationId: 'listAuditLog',
         tags: ['Admin'],
         summary: 'Read the staff audit log, newest first',
         description:
@@ -1182,6 +1293,7 @@ const openApiSpec = {
 
     '/admin/audit-log/verify': {
       get: {
+        operationId: 'verifyAuditLog',
         tags: ['Admin'],
         summary: 'Verify the audit log hash chain',
         description:

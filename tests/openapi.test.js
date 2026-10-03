@@ -68,6 +68,44 @@ describe('OpenAPI document', () => {
     }
   });
 
+  it('gives every success response a schema or an example', () => {
+    for (const { method, path, operation } of documentedOperations) {
+      for (const [code, response] of Object.entries(operation.responses)) {
+        if (!code.startsWith('2')) continue;
+        const json = response.content && response.content['application/json'];
+        const label = `${method.toUpperCase()} ${path} ${code}`;
+        expect([label, Boolean(json && (json.schema || json.example || json.examples))]).toEqual([
+          label,
+          true,
+        ]);
+      }
+    }
+  });
+
+  it('gives every error response the shared error schema', () => {
+    for (const { method, path, operation } of documentedOperations) {
+      for (const [code, response] of Object.entries(operation.responses)) {
+        if (Number(code) < 400) continue;
+        const label = `${method.toUpperCase()} ${path} ${code}`;
+        const schema = response.content['application/json'].schema;
+        expect([label, schema]).toEqual([label, { $ref: '#/components/schemas/ErrorResponse' }]);
+      }
+    }
+  });
+
+  it('gives every operation a unique operationId', () => {
+    const ids = documentedOperations.map(({ operation }) => operation.operationId);
+    expect(ids.every(Boolean)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('declares public operations as public (security: []) rather than leaving it implicit', () => {
+    for (const { method, path, operation } of documentedOperations) {
+      if (PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))) continue;
+      expect([`${method} ${path}`, operation.security]).toEqual([`${method} ${path}`, []]);
+    }
+  });
+
   it('marks every protected operation with bearer auth and documents its 401', () => {
     const protectedOps = documentedOperations.filter(({ path }) =>
       PROTECTED_PREFIXES.some((prefix) => path.startsWith(prefix))
