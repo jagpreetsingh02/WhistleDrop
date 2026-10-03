@@ -5,21 +5,26 @@
  * can be built in an isolated module registry with its own environment.
  */
 
-const request = require('supertest');
+const { listenOnLoopback } = require('./setup/loopback');
 
 const ORIGINAL_ENV = { ...process.env };
+const servers = [];
 
-function buildApp(overrides) {
+/** Builds an app with its own environment and serves it on 127.0.0.1. */
+async function buildApp(overrides) {
   let app;
   jest.isolateModules(() => {
     Object.assign(process.env, overrides);
     app = require('../src/app')();
   });
   process.env = { ...ORIGINAL_ENV };
-  return app;
+
+  const served = await listenOnLoopback(app);
+  servers.push(served);
+  return served;
 }
 
-const fromClient = (app, ip) => request(app).get('/api/v1/meta').set('X-Forwarded-For', ip);
+const fromClient = (served, ip) => served.request().get('/api/v1/meta').set('X-Forwarded-For', ip);
 
 beforeEach(() => {
   // express-rate-limit warns (on purpose) when it sees X-Forwarded-For without
@@ -28,11 +33,14 @@ beforeEach(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
-afterEach(() => jest.restoreAllMocks());
+afterEach(async () => {
+  jest.restoreAllMocks();
+  await Promise.all(servers.splice(0).map((served) => served.close()));
+});
 
 describe('TRUST_PROXY', () => {
   it('without it, every client behind a proxy shares one rate-limit bucket', async () => {
-    const app = buildApp({ TRUST_PROXY: '0', RATE_LIMIT_MAX: '2' });
+    const app = await buildApp({ TRUST_PROXY: '0', RATE_LIMIT_MAX: '2' });
 
     const statuses = [];
     for (const ip of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) {
@@ -45,7 +53,7 @@ describe('TRUST_PROXY', () => {
   });
 
   it('logs the misconfiguration warning so a forgotten setting is visible', async () => {
-    const app = buildApp({ TRUST_PROXY: '0', RATE_LIMIT_MAX: '50' });
+    const app = await buildApp({ TRUST_PROXY: '0', RATE_LIMIT_MAX: '50' });
     await fromClient(app, '198.51.100.9');
 
     const logged = [...console.error.mock.calls, ...console.warn.mock.calls].flat().join(' ');
@@ -55,7 +63,7 @@ describe('TRUST_PROXY', () => {
   });
 
   it('with one trusted hop, each real client gets its own bucket', async () => {
-    const app = buildApp({ TRUST_PROXY: '1', RATE_LIMIT_MAX: '2' });
+    const app = await buildApp({ TRUST_PROXY: '1', RATE_LIMIT_MAX: '2' });
 
     expect((await fromClient(app, '198.51.100.1')).status).toBe(200);
     expect((await fromClient(app, '198.51.100.1')).status).toBe(200);

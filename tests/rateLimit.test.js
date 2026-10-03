@@ -11,11 +11,13 @@ process.env.TRACK_RATE_LIMIT_MAX = '3';
 process.env.AUTH_RATE_LIMIT_MAX = '2';
 process.env.REPORTER_MESSAGE_RATE_LIMIT_MAX = '2';
 
-const request = require('supertest');
 const createApp = require('../src/app');
 const db = require('./setup/testDb');
+const { useLoopbackServer } = require('./setup/loopback');
 
 const app = createApp();
+const client = useLoopbackServer(app);
+const request = () => client();
 
 const VALID_REPORT = {
   category: 'OTHER',

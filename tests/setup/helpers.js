@@ -1,10 +1,19 @@
 'use strict';
 
-const request = require('supertest');
+const supertest = require('supertest');
 const createApp = require('../../src/app');
 const { createModerator } = require('../../src/services/auth.service');
+const { useLoopbackServer } = require('./loopback');
 
 const app = createApp();
+const client = useLoopbackServer(app);
+
+/**
+ * Drop-in replacement for supertest's `request(app)` that talks to the app
+ * over 127.0.0.1 (see loopback.js for why). Tests keep writing
+ * `request(app).get(...)`.
+ */
+const request = (target) => (target === app ? client() : supertest(target));
 
 const VALID_REPORT = {
   category: 'SECURITY',
