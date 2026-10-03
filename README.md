@@ -1,310 +1,311 @@
 # WhistleDrop — Speak Without Being Seen
 
-A backend-only REST API for anonymous whistleblowing.
+[![CI](https://github.com/jagpreetsingh02/WistleDrop/actions/workflows/ci.yml/badge.svg)](https://github.com/jagpreetsingh02/WistleDrop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.19-339933?logo=node.js&logoColor=white)](package.json)
 
-Anyone can file a report without an account, an email address or a session. In
-return they get a **case code** — a one-time, cryptographically random string
-that is the only way to follow the case. Moderators log in with JWTs, work the
-queue, and post updates that the reporter can read using that code.
+WhistleDrop is a backend API for anonymous whistleblowing. Anyone can file a
+report without an account, an email address or a session, and receives a
+one-time **case code** — the only key to their case. With it they can follow
+the investigation and answer a moderator's questions, while the system stays
+unable to identify them: no IP addresses, user-agents or accounts are stored,
+the case code exists only as a hash, timestamps are blurred to 15-minute
+windows, and closed cases delete themselves. Moderators work the queue behind
+JWT authentication, and every report they open is written to a tamper-evident
+audit log, so the people watching are watched too.
 
-The design goal is narrow and deliberate: **the system should not be able to
-identify a reporter, even if the database is stolen and the server is
-compromised.** Every choice below follows from that.
-
-- **Stack:** Node.js · Express 5 · MongoDB (Mongoose 8) · JWT · Zod · Swagger/OpenAPI 3
-- **Interactive docs:** `http://localhost:4000/api-docs`
-- **Tests:** 84 automated tests (Jest + Supertest + in-memory MongoDB)
+**Stack:** Node.js · Express 5 · MongoDB (Mongoose 8) · Zod 4 · JWT · Swagger / OpenAPI 3 · Jest + Supertest · Docker
 
 ---
 
-## Table of contents
+## Contents
 
-1. [Quick start](#quick-start)
+1. [Features](#features)
 2. [Architecture](#architecture)
-3. [API endpoints](#api-endpoints)
-4. [Example requests and responses](#example-requests-and-responses)
-5. [Status workflow](#status-workflow)
-6. [Anonymity and privacy design](#anonymity-and-privacy-design)
-7. [Security controls](#security-controls)
-8. [Testing](#testing)
-9. [Assumptions and design decisions](#assumptions-and-design-decisions)
-10. [Known limitations and next steps](#known-limitations-and-next-steps)
+3. [Getting started](#getting-started) — local and Docker
+4. [Configuration](#configuration)
+5. [API endpoints](#api-endpoints)
+6. [Examples](#examples) — real requests and responses
+7. [Status workflow](#status-workflow)
+8. [Anonymity and privacy design](#anonymity-and-privacy-design)
+9. [Security controls](#security-controls)
+10. [Threat model](#threat-model)
+11. [Testing and quality](#testing-and-quality)
+12. [Design decisions](#design-decisions)
+13. [Screenshots](#screenshots)
+14. [Known limitations](#known-limitations)
 
 ---
 
-## Quick start
+## Features
 
-### Prerequisites
+**For reporters (anonymous)**
 
-- Node.js 18+ (developed on Node 24)
-- MongoDB running locally, or a MongoDB Atlas connection string
+- Submit a report (category, description, optional evidence link) with no
+  account — receive a cryptographically random case code, shown once.
+- Track the case: status, public moderator updates and the message thread.
+- Answer moderators' questions in an anonymous two-way thread, using only the
+  case code.
+- Get warned when their own text looks identifying (email, phone, ID, `@handle`,
+  "my name is…") — without the API ever echoing the text back.
 
-### 1. Install
+**For moderators (JWT)**
 
-```bash
-git clone <your-repo-url> whistledrop
-cd whistledrop
-npm install
+- List, full-text search and filter reports by status, category, date range,
+  evidence and "waiting for reporter"; sort by newest, oldest or recently
+  updated.
+- Move reports through an enforced workflow — illegal transitions return `422`
+  with the moves that *are* allowed, and concurrent edits can never silently
+  overwrite each other.
+- Post public updates for the reporter, or internal notes they never see.
+- Ask the reporter a question and see the case flagged until they answer.
+
+**For admins**
+
+- Create, list, deactivate and reactivate staff accounts (deactivation takes
+  effect on the very next request).
+- Read the staff audit log and verify its SHA-256 hash chain to detect edited,
+  deleted or re-ordered entries.
+
+**Privacy and operations**
+
+- Only the SHA-256 of the case code is stored; reporter timestamps (including
+  the one hidden inside the MongoDB `_id`) are coarsened; closed reports are
+  deleted after a retention period by a TTL index.
+- `Cache-Control: no-store` on every reporter and staff route, Helmet, five rate
+  limiters, strict Zod validation that rejects unknown fields.
+- Swagger UI, a Postman collection, a dev-only seed script, Docker image and
+  compose stack, and CI on Node 20 and 22.
+
+---
+
+## Architecture
+
+```
+                         ┌─────────────────────────────────────────────────────────┐
+  Reporter ──(no auth)──▶│  helmet · cors · express.json(100 KB) · trust proxy     │
+  Moderator ─(JWT)──────▶│  global rate limiter (/api/v1)                          │
+  Admin ────(JWT+role)──▶│                                                         │
+                         │  routes/       noStore → route limiter → validate(Zod)  │
+                         │                → requireModerator → requireRole         │
+                         │      │                                                  │
+                         │  controllers/  read req.validated, shape the envelope   │
+                         │      │         (no business logic)                      │
+                         │  services/     the rules: case codes, workflow, atomic  │
+                         │      │         writes, presenters, PII scan, audit log  │
+                         │  models/       Mongoose schemas in strict mode — the    │
+                         │                last word on what may be stored          │
+                         └──────┬──────────────────────────────────────────────────┘
+                                ▼
+                   MongoDB: reports · moderators · auditlogs
+                   (TTL index deletes closed reports; text index powers search)
+
+  Any error, from any layer ──▶ middleware/errorHandler ──▶ { success: false, error: { … } }
 ```
 
-### 2. Configure
+Each layer has one job, so controllers stay thin and the domain rules can be
+tested without HTTP. Responses are built by **explicit presenters**
+(`toReporterView`, `toModeratorView`, …) field by field, never by serialising a
+document — which is what guarantees internal fields cannot leak by accident.
+
+```
+src/
+├── app.js                   builds the Express app (exported for tests)
+├── server.js                connects to MongoDB, syncs indexes, listens, shuts down gracefully
+├── config/
+│   ├── env.js               loads and validates every environment variable (fail fast)
+│   ├── db.js                connect / disconnect / syncIndexes
+│   └── swagger.js           hand-written OpenAPI 3 document
+├── models/                  Report (+ embedded updates and messages), Moderator, AuditLog
+├── controllers/             report (public), auth, moderation, admin
+├── routes/                  one router per audience; guards applied router-wide
+├── middleware/              auth + requireRole, validate, rateLimiter, noStore, notFound, errorHandler
+├── services/                report, auth, admin, audit
+├── validators/              Zod schemas per resource
+└── utils/                   caseCode, statusWorkflow, timeBuckets, piiScanner, constants, AppError, logger
+scripts/                     createModerator.js (provisioning CLI), seed.js (dev-only demo data)
+tests/                       19 suites — unit and integration against a real in-memory MongoDB
+docs/                        Postman collection, screenshot checklist
+```
+
+**Response envelope.** Every response — success or failure — has one shape:
+
+```jsonc
+{ "success": true,  "message": "…", "data": { … }, "meta": { … } }
+{ "success": false, "error": { "message": "…", "details": … } }
+```
+
+---
+
+## Getting started
+
+### Local
+
+**Prerequisites:** Node.js ≥ 20.19 and MongoDB (local or Atlas).
 
 ```bash
+git clone https://github.com/jagpreetsingh02/WistleDrop.git
+cd WistleDrop
+npm install
 cp .env.example .env
 ```
 
-Then edit `.env`. The only values you must set are `MONGODB_URI` and
-`JWT_SECRET`:
+Set `MONGODB_URI` and `JWT_SECRET` in `.env`:
 
 ```bash
-# generate a strong secret
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"   # a strong JWT_SECRET
 ```
+
+Startup validates every variable with Zod and **exits with a clear message** if
+something is missing or too weak, so a bad config fails at boot, not in
+production traffic.
+
+Create the first admin. There is no public sign-up endpoint; after this,
+admins manage accounts through `/api/v1/admin`:
+
+```bash
+npm run create:moderator -- --username root --password "Adm1n-Long-Passphrase" --name "Integrity Office" --role admin
+```
+
+Run it:
+
+```bash
+npm run dev      # node --watch, restarts on file changes
+npm start        # production mode
+```
+
+Open **<http://localhost:4000/api-docs>**: submit a report, copy the `caseCode`,
+track it, log in, click **Authorize**, paste the token and work the queue.
+
+**Demo data (development only).** `npm run seed` creates `demo-admin` and
+`demo-moderator` accounts and five sample reports in different states, all
+through the real services, and prints their case codes. It **refuses to run
+when `NODE_ENV=production`**, before connecting to any database.
+
+### Docker
+
+```bash
+export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
+docker compose up -d --build --wait            # API + MongoDB, waits for both health checks
+docker compose exec api node scripts/createModerator.js \
+  --username root --password "Adm1n-Long-Passphrase" --role admin
+open http://localhost:4000/api-docs
+docker compose down                             # add -v to delete the data volume
+```
+
+- **Multi-stage image** on `node:22-alpine`. Production dependencies are
+  installed in their own stage with `--ignore-scripts`, so the runtime image has
+  no dev tooling, npm cache or install-time scripts.
+- Runs as the unprivileged **`node`** user, with a `HEALTHCHECK` on `/health`
+  that uses Node's built-in `fetch` (no curl in the image).
+- MongoDB stores data in the named volume `mongo-data` and **publishes no port**:
+  only the API container can reach it.
+- `.dockerignore` keeps `.env`, tests and git history out of the build context.
+
+### Deploying behind a load balancer
+
+Set **`TRUST_PROXY=1`** (or the number of proxy hops). Without it, Express sees
+every request as coming from the load balancer's IP, so **all reporters share
+one rate-limit bucket** and a single abuser can lock everyone out. Avoid
+`TRUST_PROXY=true`: it trusts any `X-Forwarded-For` value, letting a client pick
+its own bucket. A forgotten setting shows up in the logs as
+`ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
+
+---
+
+## Configuration
+
+All variables are validated in [`src/config/env.js`](src/config/env.js);
+[`.env.example`](.env.example) is the committed template, and `.env` is
+gitignored.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `NODE_ENV` | `development` | `development` \| `test` \| `production` |
+| `NODE_ENV` | `development` | `development` · `test` · `production` |
 | `PORT` | `4000` | HTTP port |
 | `MONGODB_URI` | — | **Required.** MongoDB connection string |
-| `JWT_SECRET` | — | **Required.** Min. 32 characters |
-| `JWT_EXPIRES_IN` | `2h` | Moderator session length |
-| `BCRYPT_ROUNDS` | `12` | bcrypt work factor for staff passwords (4–15; tests use 4) |
-| `TRUST_PROXY` | `0` | Reverse-proxy hops in front of the API — **set to `1` behind a load balancer** |
+| `JWT_SECRET` | — | **Required.** At least 32 characters |
+| `JWT_EXPIRES_IN` | `2h` | Staff session length |
+| `BCRYPT_ROUNDS` | `12` | bcrypt work factor for staff passwords (4–15; the test suite uses 4) |
+| `TRUST_PROXY` | `0` | Reverse-proxy hops in front of the API — **`1` behind a load balancer** |
 | `TIMESTAMP_BUCKET_MINUTES` | `15` | Reporter-originated timestamps are rounded down to this window (`0` = exact) |
 | `RETENTION_DAYS_AFTER_CLOSE` | `365` | Closed reports are deleted this many days after closing (`0` = keep forever) |
 | `CORS_ORIGIN` | `*` | Comma-separated allowlist, or `*` |
-| `RATE_LIMIT_WINDOW_MINUTES` | `15` | Window for all limiters |
+| `RATE_LIMIT_WINDOW_MINUTES` | `15` | Window shared by all limiters |
 | `RATE_LIMIT_MAX` | `100` | Requests per window, whole API |
 | `REPORT_RATE_LIMIT_MAX` | `5` | Report submissions per window |
 | `AUTH_RATE_LIMIT_MAX` | `10` | Login attempts per window |
 | `TRACK_RATE_LIMIT_MAX` | `20` | Case-code lookups per window |
 | `REPORTER_MESSAGE_RATE_LIMIT_MAX` | `10` | Reporter replies per window |
 
-`.env` is gitignored; `.env.example` is the committed template. Startup
-validates every variable with Zod and **exits with a clear message** if
-something is missing or too weak — a bad config fails at boot, not at 3am.
-
-### 3. Create the first admin
-
-There is no public sign-up endpoint (see
-[design decisions](#assumptions-and-design-decisions)). The first account is
-provisioned from the CLI; after that, admins manage accounts through
-`/api/v1/admin`:
-
-```bash
-npm run create:moderator -- --username root --password "Adm1n-Long-Passphrase" --name "Integrity Office" --role admin
-npm run create:moderator -- --username alice --password "Str0ngPassphrase!" --name "Ethics Desk"   # role defaults to moderator
-```
-
-> **Deploying behind a load balancer?** Set `TRUST_PROXY=1` (or the number of
-> proxy hops). Without it, Express sees every request as coming from the load
-> balancer's IP, so **all reporters share one rate-limit bucket** and a single
-> abuser can lock everyone out of submitting or tracking. Avoid `TRUST_PROXY=true`:
-> it trusts any `X-Forwarded-For` value, letting a client pick its own bucket and
-> bypass limits. A forgotten setting shows up in the logs as
-> `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
-
-### Demo data (development only)
-
-```bash
-npm run seed
-```
-
-Creates `demo-admin` / `demo-moderator` accounts and five sample reports in
-different states (resolved, awaiting the reporter, under review with a reply,
-submitted, dismissed), all through the real services, and prints their case
-codes. It **refuses to run when `NODE_ENV=production`**, exiting before it
-connects to any database.
-
-### 4. Run
-
-```bash
-npm run dev     # node --watch, restarts on file changes
-npm start       # production mode
-npm test        # full test suite (spins up its own in-memory MongoDB)
-```
-
-Then open **<http://localhost:4000/api-docs>** and try the API from the browser:
-submit a report, copy the `caseCode`, track it, log in, click **Authorize**,
-paste the token, and work the queue.
-
-### Run with Docker
-
-```bash
-export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
-docker compose up -d --build --wait          # API + MongoDB, waits for health checks
-docker compose exec api node scripts/createModerator.js \
-  --username root --password "Adm1n-Long-Passphrase" --role admin
-open http://localhost:4000/api-docs
-docker compose down                           # add -v to delete the data volume
-```
-
-- **Multi-stage image** on `node:22-alpine`: production dependencies are
-  installed in a separate stage with `--ignore-scripts`, so the runtime image
-  has no dev tooling, npm cache or install-time scripts.
-- Runs as the unprivileged **`node`** user, with a `HEALTHCHECK` on `/health`
-  using Node's built-in `fetch` (no curl in the image).
-- MongoDB data lives in the named volume `mongo-data`. The database publishes
-  **no port** — it is reachable only from the API container.
-- `.dockerignore` keeps `.env`, tests and git history out of the build context.
-
----
-
-## Architecture
-
-### Layers
-
-The request path is deliberately boring and one-directional. Each layer has one
-job, which keeps controllers small and makes the domain rules testable without
-HTTP.
-
-```
-HTTP request
-    │
-    ├─ helmet · cors · express.json(100kb)      security headers, body cap
-    ├─ rate limiter                             per-route throttling
-    ├─ validate(schema)                         Zod → req.validated
-    ├─ requireModerator                         JWT verify + account re-check   (protected routes only)
-    │
-    ▼
-routes/        maps URLs to middleware + controller
-    ▼
-controllers/   reads req.validated, shapes the HTTP response — no business logic
-    ▼
-services/      the actual rules: case codes, status workflow, presenters
-    ▼
-models/        Mongoose schemas — the last line of defence on what may be stored
-    ▼
-MongoDB
-
-errors from any layer ──▶ middleware/errorHandler.js  ──▶  { success: false, error: { … } }
-```
-
-### Directory layout
-
-```
-src/
-├── app.js                  builds the Express app (exported for tests)
-├── server.js               connects to MongoDB, listens, handles shutdown
-├── config/
-│   ├── env.js              loads + validates environment variables (fail fast)
-│   ├── db.js               MongoDB connect/disconnect
-│   └── swagger.js          hand-written OpenAPI 3 document
-├── models/
-│   ├── Report.js           report + embedded status updates
-│   └── Moderator.js        moderator account, bcrypt helpers
-├── controllers/
-│   ├── report.controller.js       public submit + track
-│   ├── auth.controller.js         login, me
-│   └── moderation.controller.js   protected moderator actions
-├── routes/
-│   ├── index.js            /meta, /health, mounts the routers
-│   ├── report.routes.js    public routes
-│   ├── auth.routes.js      login / me
-│   └── moderator.routes.js protected routes (one router-level guard)
-├── middleware/
-│   ├── auth.js             JWT verification
-│   ├── validate.js         generic Zod validation middleware
-│   ├── rateLimiter.js      the four limiters
-│   ├── notFound.js         unmatched routes → 404
-│   └── errorHandler.js     centralized error → HTTP mapping
-├── services/
-│   ├── report.service.js   domain logic + reporter/moderator presenters
-│   └── auth.service.js     login, token signing, account creation
-├── utils/
-│   ├── caseCode.js         generate / normalize / hash case codes
-│   ├── statusWorkflow.js   the transition table
-│   ├── constants.js        categories, statuses, JWT claims
-│   ├── AppError.js         typed, expected errors
-│   ├── asyncHandler.js     async error forwarding
-│   └── logger.js           deliberately minimal (no request logging)
-├── validators/             Zod schemas per resource
-scripts/createModerator.js  account provisioning CLI
-tests/                      unit + integration suites
-```
-
-### Response envelope
-
-Every response — success or failure — uses the same shape, so a client needs
-one parser:
-
-```jsonc
-// success
-{ "success": true, "message": "…", "data": { … }, "meta": { … } }
-
-// failure
-{ "success": false, "error": { "message": "…", "details": … } }
-```
+The scripts also read `MODERATOR_USERNAME` / `MODERATOR_PASSWORD` /
+`MODERATOR_NAME` / `MODERATOR_ROLE` (CLI flags take precedence) and
+`SEED_ADMIN_PASSWORD` / `SEED_MODERATOR_PASSWORD`.
 
 ---
 
 ## API endpoints
 
-Base URL: `/api/v1`
+Base URL `/api/v1`. Interactive documentation at `/api-docs`; the raw OpenAPI
+document at `/api-docs.json`.
 
 ### Public — no authentication
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `POST` | `/reports` | Submit an anonymous report, receive a case code |
-| `GET` | `/reports/:caseCode` | Track a case: status, public updates and the message thread |
-| `POST` | `/reports/:caseCode/messages` | Reply to moderators anonymously (returns PII warnings) |
+| `POST` | `/reports` | Submit an anonymous report; returns the case code (once) and PII warnings |
+| `GET` | `/reports/:caseCode` | Track a case: status, public updates, message thread |
+| `POST` | `/reports/:caseCode/messages` | Reply to moderators anonymously; returns PII warnings |
+| `POST` | `/auth/login` | Exchange staff credentials for a JWT |
 | `GET` | `/meta` | Categories, statuses and the status workflow |
 | `GET` | `/health` | Liveness probe (also at the root `/health`) |
 
-### Moderator — `Authorization: Bearer <token>`
+### Moderator — `Authorization: Bearer <token>` (role `moderator` or `admin`)
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `POST` | `/auth/login` | Exchange credentials for a JWT |
-| `GET` | `/auth/me` | Who the current token belongs to |
-| `GET` | `/moderator/reports` | List, search and filter — `?status=&category=&q=&from=&to=&hasEvidence=&sort=&page=&limit=` |
-| `GET` | `/moderator/reports/:id` | Full report with description and update history |
-| `PATCH` | `/moderator/reports/:id/status` | Move the report to a new status |
-| `POST` | `/moderator/reports/:id/updates` | Add a public update or internal note without changing status |
-| `POST` | `/moderator/reports/:id/messages` | Ask the reporter a question (sets `awaitingReporter`) |
+| `GET` | `/auth/me` | Who the token belongs to |
+| `GET` | `/moderator/reports` | List, search and filter — `?status=&category=&q=&from=&to=&hasEvidence=&awaitingReporter=&sort=&page=&limit=` |
+| `GET` | `/moderator/reports/:id` | Full report with updates and messages (audit-logged) |
+| `PATCH` | `/moderator/reports/:id/status` | Move the report along the workflow |
+| `POST` | `/moderator/reports/:id/updates` | Add a public update or an internal note |
+| `POST` | `/moderator/reports/:id/messages` | Ask the reporter a question |
 | `GET` | `/moderator/stats` | Report counts per status |
 
-### Admin — `Authorization: Bearer <token>` with the `admin` role
+### Admin — `Authorization: Bearer <token>` (role `admin`)
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `POST` | `/admin/moderators` | Create a moderator or admin account |
-| `GET` | `/admin/moderators` | List staff accounts — `?page=&limit=` |
+| `GET` | `/admin/moderators` | List staff accounts |
 | `PATCH` | `/admin/moderators/:id/deactivate` | Deactivate an account (effective on its next request) |
 | `PATCH` | `/admin/moderators/:id/activate` | Reactivate an account |
+| `GET` | `/admin/audit-log` | Staff audit log, newest first |
+| `GET` | `/admin/audit-log/verify` | Recompute the hash chain and report the first break |
 
-| `GET` | `/admin/audit-log` | Staff audit log, newest first — `?page=&limit=` |
-| `GET` | `/admin/audit-log/verify` | Recompute the audit hash chain and report the first break |
+### Status codes
 
-Admins can also use every moderator route. Moderators get `403` on admin routes.
-
-### Status codes used
-
-| Code | When |
+| Code | Meaning in this API |
 | --- | --- |
-| `200 OK` | Successful read or status change |
-| `201 Created` | Report submitted, or update added |
-| `400 Bad Request` | Validation failed, malformed JSON, malformed id or case code |
-| `401 Unauthorized` | Missing, malformed, expired, forged token; bad credentials; role changed since login |
-| `403 Forbidden` | Moderator calling an admin route; admin deactivating themselves |
-| `404 Not Found` | Unknown case code, unknown report id, unknown route |
-| `409 Conflict` | Status is already the requested one; update on a closed case; another moderator changed the report concurrently |
-| `422 Unprocessable Entity` | Well-formed request that breaks the status workflow |
-| `429 Too Many Requests` | Rate limit exceeded |
-| `500 Internal Server Error` | Unexpected failure (generic message, details logged server-side) |
-
-`400` vs `422` is a deliberate distinction: `400` means *the request was
-malformed*, `422` means *the request was fine but the domain forbids it*. A
-client can react differently to each.
+| `200` / `201` | Success / resource created |
+| `400` | Malformed input: validation, unknown fields, bad JSON, malformed id or case code |
+| `401` | Not authenticated: missing, invalid, expired or forged token; bad credentials; role changed since login |
+| `403` | Authenticated but not allowed: moderator on an admin route; admin deactivating themselves |
+| `404` | Unknown case code, report, account or route |
+| `409` | State conflict: already in that status, case closed, another moderator changed it concurrently, thread full, account already (in)active, username taken |
+| `413` | Body over 100 KB |
+| `422` | Well-formed request that the status workflow forbids |
+| `429` | Rate limited |
+| `500` / `503` | Unexpected failure (generic message, details only in server logs) / audit log contended |
 
 ---
 
-## Example requests and responses
+## Examples
 
-> All payloads below are actual output from a running instance.
+> Every payload below is real output from a running instance (tokens and ids
+> abbreviated where marked).
 
-### 1. Submit a report (anonymous)
+### Submit a report
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/reports \
@@ -321,91 +322,89 @@ curl -X POST http://localhost:4000/api/v1/reports \
   "success": true,
   "message": "Report submitted. Save your case code now — it is shown only once and cannot be recovered.",
   "data": {
-    "caseCode": "WD-7JCF5-FRY4F-QNEEB",
+    "caseCode": "WD-HGGHE-6M4D5-5Y7KY",
     "category": "SECURITY",
     "status": "SUBMITTED",
-    "submittedAt": "2026-09-21T18:16:06.287Z"
+    "submittedAt": "2026-10-03T13:15:00.000Z",
+    "warnings": []
   }
 }
 ```
 
-`category` is case-insensitive on input and normalized to upper case.
-`evidenceUrl` is optional and must be `http(s)`.
+`submittedAt` is the start of the 15-minute window, never the real time. The
+response carries `Cache-Control: no-store`.
 
-### 2. Track the case
+### PII warning
 
-```bash
-curl http://localhost:4000/api/v1/reports/WD-7JCF5-FRY4F-QNEEB
-```
-
-Codes are matched case-insensitively with separators ignored, so
-`wd 7jcf5 fry4f qneeb` works too.
+When the text looks identifying, the report is still accepted, but the reporter
+is told — by category, never by quoting the match:
 
 ```json
-{
-  "success": true,
-  "data": {
-    "category": "SECURITY",
-    "status": "RESOLVED",
-    "submittedAt": "2026-09-21T18:16:06.287Z",
-    "lastUpdatedAt": "2026-09-21T18:16:06.510Z",
-    "isClosed": true,
-    "updates": [
-      {
-        "message": "We have opened an investigation and contacted the infrastructure team.",
-        "status": "UNDER_REVIEW",
-        "createdAt": "2026-09-21T18:16:06.503Z"
-      },
-      {
-        "message": "Still in progress — we expect an outcome within two weeks.",
-        "status": null,
-        "createdAt": "2026-09-21T18:16:06.507Z"
-      },
-      {
-        "message": "The exposed credentials were rotated and access logs were reviewed.",
-        "status": "RESOLVED",
-        "createdAt": "2026-09-21T18:16:06.510Z"
-      }
-    ]
+// description: "My name is Sam. The lab admin password is on a sticky note; email me at sam.k@example.com."
+"warnings": [
+  {
+    "code": "POSSIBLE_EMAIL",
+    "message": "The text appears to contain an email address. Moderators will see this text. If it could identify you, avoid repeating such details in follow-up messages."
+  },
+  {
+    "code": "POSSIBLE_SELF_IDENTIFICATION",
+    "message": "The text appears to name or describe how to contact the author. Moderators will see this text. If it could identify you, avoid repeating such details in follow-up messages."
   }
-}
+]
 ```
 
-Note what is **not** here: no report id, no description, no moderator name — see
-[privacy design](#anonymity-and-privacy-design).
-
-### 3. Invalid case code
+### Validation — every problem at once, unknown fields rejected
 
 ```json
-// GET /api/v1/reports/WD-ZZZZZ-ZZZZZ-ZZZZZ  →  404
-{
-  "success": false,
-  "error": { "message": "No case found for that code. Check the code and try again." }
-}
-```
-
-A code too short to be real is rejected earlier, with `400` and a field-level
-message.
-
-### 4. Validation failure
-
-```json
-// POST /api/v1/reports  { "category": "Gossip", "description": "too short" }  →  400
+// { "category": "Gossip", "description": "too short", "email": "me@example.com" }  →  400
 {
   "success": false,
   "error": {
     "message": "Validation failed",
     "details": [
-      { "field": "body.category",    "message": "category must be one of: SECURITY, HARASSMENT, CORRUPTION, TECHNICAL, OTHER" },
-      { "field": "body.description", "message": "description must be at least 20 characters" }
+      { "field": "body.category", "message": "category must be one of: SECURITY, HARASSMENT, CORRUPTION, TECHNICAL, OTHER" },
+      { "field": "body.description", "message": "description must be at least 20 characters" },
+      { "field": "body", "message": "Unrecognized key: \"email\"" }
     ]
   }
 }
 ```
 
-Every failing field is reported at once, not one per round trip.
+### Track a case
 
-### 5. Moderator login
+Codes are matched case-insensitively with separators ignored, so
+`wd hgghe 6m4d5 5y7ky` works too. An unknown code returns `404`:
+`"No case found for that code. Check the code and try again."`
+
+```json
+// GET /api/v1/reports/WD-HGGHE-6M4D5-5Y7KY  — after a moderator asked a question
+{
+  "success": true,
+  "data": {
+    "category": "SECURITY",
+    "status": "UNDER_REVIEW",
+    "submittedAt": "2026-10-03T13:15:00.000Z",
+    "lastUpdatedAt": "2026-10-03T13:23:20.014Z",
+    "isClosed": false,
+    "awaitingYourReply": true,
+    "updates": [
+      {
+        "message": "We have opened an investigation and contacted the infrastructure team.",
+        "status": "UNDER_REVIEW",
+        "createdAt": "2026-10-03T13:23:20.004Z"
+      }
+    ],
+    "messages": [
+      { "from": "MODERATOR", "body": "Which repository are the credentials in?", "createdAt": "2026-10-03T13:23:20.014Z" }
+    ]
+  }
+}
+```
+
+Absent by design: the report id, the description, the evidence link, which
+moderator acted, and the internal note that was added in between (see below).
+
+### Moderator login
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/auth/login \
@@ -420,15 +419,15 @@ curl -X POST http://localhost:4000/api/v1/auth/login \
   "data": {
     "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…",
     "expiresIn": "2h",
-    "moderator": { "id": "6ab17466f6cabe35b17ce5cc", "username": "alice", "displayName": "Ethics Desk" }
+    "moderator": { "id": "6ac101c73e7eeae0f95616fe", "username": "alice", "displayName": "Ethics Desk", "role": "moderator" }
   }
 }
 ```
 
-### 6. List and filter reports
+### Search and filter
 
 ```bash
-curl "http://localhost:4000/api/v1/moderator/reports?category=SECURITY&page=1&limit=20" \
+curl "http://localhost:4000/api/v1/moderator/reports?q=credentials&category=security&hasEvidence=true&from=2026-01-01&to=2026-12-31&sort=recentlyUpdated" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -437,57 +436,45 @@ curl "http://localhost:4000/api/v1/moderator/reports?category=SECURITY&page=1&li
   "success": true,
   "data": [
     {
-      "id": "6ab17466f6cabe35b17ce5cf",
+      "id": "6ac0ffd47702669405534346",
       "category": "SECURITY",
       "status": "SUBMITTED",
       "descriptionPreview": "Production database credentials are committed to a public repository and have not been rotated since March.",
       "hasEvidence": true,
       "updateCount": 0,
-      "submittedAt": "2026-09-21T18:16:06.287Z",
-      "lastUpdatedAt": "2026-09-21T18:16:06.287Z"
+      "messageCount": 0,
+      "awaitingReporter": false,
+      "submittedAt": "2026-10-03T13:15:00.000Z",
+      "lastUpdatedAt": "2026-10-03T13:15:00.000Z"
     }
   ],
   "meta": {
     "page": 1, "limit": 20, "total": 1, "totalPages": 1,
-    "filters": { "status": null, "category": "SECURITY" }
+    "sort": "recentlyUpdated",
+    "filters": {
+      "status": null, "category": "SECURITY", "q": "credentials",
+      "from": "2026-01-01T00:00:00.000Z", "toExclusive": "2027-01-01T00:00:00.000Z",
+      "hasEvidence": true, "awaitingReporter": null
+    }
   }
 }
-```
-
-Search and filters combine freely:
-
-```bash
-curl "http://localhost:4000/api/v1/moderator/reports?q=credentials&category=security&hasEvidence=true&from=2026-09-01&to=2026-09-30&sort=recentlyUpdated" \
-  -H "Authorization: Bearer $TOKEN"
 ```
 
 | Parameter | Meaning |
 | --- | --- |
 | `q` | Full-text search over descriptions (MongoDB text index: stemmed, case-insensitive, words OR-ed; `"phrase"` and `-exclude` work) |
-| `from` / `to` | Submission date range. `from` is inclusive; a plain-date `to` includes that whole day |
-| `hasEvidence` | `true` / `false` |
-| `sort` | `newest` (default), `oldest`, `recentlyUpdated` |
+| `from` / `to` | Submission date range. `from` is inclusive; a plain-date `to` includes that whole day. `meta.filters` shows the normalised bounds |
+| `hasEvidence` · `awaitingReporter` | `true` / `false` |
+| `sort` | `newest` (default) · `oldest` · `recentlyUpdated` |
 | `limit` | 1–100 (default 20) |
 
-`meta.filters` echoes back what was applied after normalisation, so a client
-can see exactly how `to=2026-09-30` was interpreted.
+A reversed range is a `400`:
+`{ "field": "query.to", "message": "to must not be earlier than from" }`.
 
-Without a token the same call returns `401`:
-
-```json
-{ "success": false, "error": { "message": "Missing or malformed Authorization header" } }
-```
-
-### 7. Change status — rejected
-
-```bash
-curl -X PATCH http://localhost:4000/api/v1/moderator/reports/6ab17466f6cabe35b17ce5cf/status \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{ "status": "RESOLVED" }'
-```
+### Status change rejected by the workflow
 
 ```json
-// 422 — a report cannot jump straight from SUBMITTED to RESOLVED
+// PATCH /api/v1/moderator/reports/:id/status  { "status": "RESOLVED" }  on a SUBMITTED report  →  422
 {
   "success": false,
   "error": {
@@ -501,99 +488,170 @@ curl -X PATCH http://localhost:4000/api/v1/moderator/reports/6ab17466f6cabe35b17
 }
 ```
 
-The error tells the client exactly what *is* allowed, so a UI can render the
-right buttons without hard-coding the workflow.
-
-### 8. Change status — accepted
+### Status change accepted, internal note, question to the reporter
 
 ```bash
-curl -X PATCH http://localhost:4000/api/v1/moderator/reports/6ab17466f6cabe35b17ce5cf/status \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{ "status": "UNDER_REVIEW", "message": "We have opened an investigation and contacted the infrastructure team." }'
+curl -X PATCH .../moderator/reports/$ID/status   -d '{ "status": "UNDER_REVIEW", "message": "We have opened an investigation and contacted the infrastructure team." }'
+curl -X POST  .../moderator/reports/$ID/updates  -d '{ "message": "Repo owner identified as the platform team; rotation planned tonight.", "visibility": "INTERNAL" }'
+curl -X POST  .../moderator/reports/$ID/messages -d '{ "body": "Which repository are the credentials in?" }'
+```
+
+The moderator's view after those three calls (abridged to the parts that
+changed):
+
+```json
+{
+  "success": true,
+  "message": "Message sent to the reporter",
+  "data": {
+    "id": "6ac0ffd47702669405534346",
+    "status": "UNDER_REVIEW",
+    "allowedTransitions": ["RESOLVED", "DISMISSED"],
+    "closedAt": null,
+    "awaitingReporter": true,
+    "messages": [
+      {
+        "from": "MODERATOR",
+        "body": "Which repository are the credentials in?",
+        "createdAt": "2026-10-03T13:23:20.014Z",
+        "moderator": { "id": "6ac101c73e7eeae0f95616fe", "displayName": "Ethics Desk" }
+      }
+    ],
+    "updates": [
+      { "id": "6ac101c8b3c0757c7a0071c3", "message": "We have opened an investigation and contacted the infrastructure team.", "status": "UNDER_REVIEW", "visibility": "PUBLIC", "createdAt": "2026-10-03T13:23:20.004Z", "moderator": { "id": "6ac101c73e7eeae0f95616fe", "displayName": "Ethics Desk" } },
+      { "id": "6ac101c8b3c0757c7a0071cb", "message": "Repo owner identified as the platform team; rotation planned tonight.", "status": null, "visibility": "INTERNAL", "createdAt": "2026-10-03T13:23:20.010Z", "moderator": { "id": "6ac101c73e7eeae0f95616fe", "displayName": "Ethics Desk" } }
+    ]
+  }
+}
+```
+
+Compare with the reporter's view of the same moment in
+[Track a case](#track-a-case): the internal note is missing, there is no
+moderator identity, and the reporter's `lastUpdatedAt` points at the last
+*public* event (13:23:20.014), not at the internal note.
+
+### The reporter answers
+
+```bash
+curl -X POST http://localhost:4000/api/v1/reports/WD-HGGHE-6M4D5-5Y7KY/messages \
+  -H "Content-Type: application/json" \
+  -d '{ "body": "It is the infra-scripts repo, in the deploy folder. Ping me on @sam_k if needed." }'
 ```
 
 ```json
 {
   "success": true,
-  "message": "Report status updated to UNDER_REVIEW",
+  "message": "Message sent",
   "data": {
-    "id": "6ab17466f6cabe35b17ce5cf",
-    "category": "SECURITY",
-    "description": "Production database credentials are committed to a public repository and have not been rotated since March.",
-    "evidenceUrl": "https://example.com/evidence/2026-09-21",
     "status": "UNDER_REVIEW",
-    "allowedTransitions": ["RESOLVED", "DISMISSED"],
-    "submittedAt": "2026-09-21T18:16:06.287Z",
-    "lastUpdatedAt": "2026-09-21T18:16:06.503Z",
-    "updates": [
+    "awaitingYourReply": false,
+    "messages": [
+      { "from": "MODERATOR", "body": "Which repository are the credentials in?", "createdAt": "2026-10-03T13:23:20.014Z" },
+      { "from": "REPORTER", "body": "It is the infra-scripts repo, in the deploy folder. Ping me on @sam_k if needed.", "createdAt": "2026-10-03T13:15:00.000Z" }
+    ],
+    "warnings": [
       {
-        "id": "6ab17466f6cabe35b17ce5de",
-        "message": "We have opened an investigation and contacted the infrastructure team.",
-        "status": "UNDER_REVIEW",
-        "createdAt": "2026-09-21T18:16:06.503Z",
-        "moderator": { "id": "6ab17466f6cabe35b17ce5cc", "displayName": "Ethics Desk" }
+        "code": "POSSIBLE_SOCIAL_HANDLE",
+        "message": "The text appears to contain a social media or chat handle (@name). Moderators will see this text. If it could identify you, avoid repeating such details in follow-up messages."
       }
     ]
   }
 }
 ```
 
-If `message` is omitted the system writes `"Status changed to UNDER_REVIEW"`, so
-the reporter always sees *something*.
+The reply's `createdAt` is the **start of its 15-minute window** (13:15), so it
+can display as earlier than the question it answers. That is coarsening
+working as intended; **the array order is the true order** of the
+conversation.
 
-### 9. Add an update without changing status
-
-```bash
-curl -X POST http://localhost:4000/api/v1/moderator/reports/6ab17466f6cabe35b17ce5cf/updates \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{ "message": "Still in progress — we expect an outcome within two weeks." }'
-```
-
-Returns `201` with the full report. The update has `"status": null`, marking it
-as a note rather than a transition.
-
-Add `"visibility": "INTERNAL"` for a moderator-only note. Internal notes never
-appear on the tracking endpoint, and they do not move the reporter's
-`lastUpdatedAt` — otherwise the reporter could tell that moderators had been
-discussing their case privately.
-
-### Anonymous follow-up conversation
-
-Moderators often need one more detail. They can ask through the case, and the
-reporter answers with nothing but the case code:
-
-```bash
-# moderator asks — the case is flagged awaitingReporter=true
-curl -X POST http://localhost:4000/api/v1/moderator/reports/$ID/messages \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{ "body": "Which repository are the credentials in?" }'
-
-# reporter sees it on the tracking page (awaitingYourReply: true) and replies
-curl -X POST http://localhost:4000/api/v1/reports/WD-7JCF5-FRY4F-QNEEB/messages \
-  -H "Content-Type: application/json" \
-  -d '{ "body": "It is the infra-scripts repo, in the deploy folder." }'
-```
-
-- The reporter sees `from: "MODERATOR"`, never which moderator. Moderators see
-  who on their side wrote each message.
-- Reporter messages get the same PII scan as the description (`warnings[]`), a
-  coarse timestamp, and no per-message ObjectId (which would embed the exact
-  time). Thread order is the array order.
-- Writes are atomic `$push` updates whose filter also requires an open case, so
-  a reply can never land on a case closed a moment earlier (`409`). Closing a
-  case clears `awaitingReporter`.
-- `GET /moderator/reports?awaitingReporter=true` is the "waiting on reporter"
-  queue. Threads are capped at 200 messages to keep the embedded document
-  bounded.
-
-### 10. Queue overview
+Once the case is closed, further replies are refused:
 
 ```json
-// GET /api/v1/moderator/stats
-{ "success": true, "data": { "total": 12, "byStatus": { "SUBMITTED": 5, "UNDER_REVIEW": 4, "RESOLVED": 3 } } }
+// 409
+{ "success": false, "error": { "message": "This case is closed (RESOLVED) and no longer accepts messages" } }
 ```
 
-### 11. Discover the workflow
+### Concurrent moderators
+
+If two moderators act on the same report at once (`UNDER_REVIEW → RESOLVED` and
+`UNDER_REVIEW → DISMISSED`), exactly one wins. The other receives:
+
+```json
+// 409
+{
+  "success": false,
+  "error": {
+    "message": "Report status changed from UNDER_REVIEW to RESOLVED while this request was in flight. Reload and try again.",
+    "details": { "expectedStatus": "UNDER_REVIEW", "currentStatus": "RESOLVED" }
+  }
+}
+```
+
+### Admin: accounts
+
+```json
+// POST /api/v1/admin/moderators  { "username": "Neha.R", "password": "An0ther-Long-Passphrase", "displayName": "Compliance Desk" }  →  201
+{
+  "success": true,
+  "message": "Account \"neha.r\" created",
+  "data": { "id": "6ac101c8b3c0757c7a0071ff", "username": "neha.r", "displayName": "Compliance Desk", "role": "moderator", "isActive": true, "createdAt": "2026-10-03T13:23:20.425Z" }
+}
+```
+
+```json
+// PATCH /api/v1/admin/moderators/<own id>/deactivate  →  403
+{ "success": false, "error": { "message": "Admins cannot deactivate their own account" } }
+
+// any /admin route called by a moderator  →  403
+{ "success": false, "error": { "message": "This action requires the admin role" } }
+```
+
+### Admin: audit log and tamper detection
+
+```json
+// GET /api/v1/admin/audit-log?limit=4  (first two entries shown)
+{
+  "success": true,
+  "data": [
+    {
+      "seq": 8,
+      "action": "ADMIN_DEACTIVATE_ACCOUNT",
+      "moderator": { "id": "6ac101c648eff16b466dfae4", "username": "root", "displayName": "Integrity Office" },
+      "reportId": null,
+      "targetModeratorId": "6ac101c8b3c0757c7a0071ff",
+      "createdAt": "2026-10-03T13:23:20.428Z",
+      "prevHash": "39a2dabcf40b41d47efd5fe65d76d1c603709ec0af0731a9453d23e95441d5c2",
+      "hash": "1c0bac875c9f23d42872fcb34bf3b764e81c6eb2bd77f1756e9fb6794ac1e9f3"
+    },
+    {
+      "seq": 7,
+      "action": "ADMIN_CREATE_ACCOUNT",
+      "moderator": { "id": "6ac101c648eff16b466dfae4", "username": "root", "displayName": "Integrity Office" },
+      "reportId": null,
+      "targetModeratorId": "6ac101c8b3c0757c7a0071ff",
+      "createdAt": "2026-10-03T13:23:20.425Z",
+      "prevHash": "036b4d2bd1f596fdafbd08637f46d0b756f2c8d5ce31c9b4e64a846831126aba",
+      "hash": "39a2dabcf40b41d47efd5fe65d76d1c603709ec0af0731a9453d23e95441d5c2"
+    }
+  ],
+  "meta": { "page": 1, "limit": 4, "total": 8, "totalPages": 2 }
+}
+```
+
+Each entry's `prevHash` is the previous entry's `hash`. Verification, before and
+after someone edits entry #3 directly in the database:
+
+```json
+// GET /api/v1/admin/audit-log/verify
+{ "success": true, "message": "Audit log is intact",
+  "data": { "intact": true, "checkedEntries": 8, "headSeq": 8, "headHash": "1c0bac875c9f23d42872fcb34bf3b764e81c6eb2bd77f1756e9fb6794ac1e9f3" } }
+
+// after: db.auditlogs.updateOne({ seq: 3 }, { $set: { action: "LOGIN" } })
+{ "success": true, "message": "Audit log has been tampered with at entry #3",
+  "data": { "intact": false, "checkedEntries": 2, "brokenAtSeq": 3, "reason": "CONTENT_HASH_MISMATCH" } }
+```
+
+### Workflow discovery
 
 ```json
 // GET /api/v1/meta
@@ -602,12 +660,7 @@ curl -X POST http://localhost:4000/api/v1/reports/WD-7JCF5-FRY4F-QNEEB/messages 
   "data": {
     "categories": ["SECURITY", "HARASSMENT", "CORRUPTION", "TECHNICAL", "OTHER"],
     "statuses": ["SUBMITTED", "UNDER_REVIEW", "RESOLVED", "DISMISSED"],
-    "workflow": {
-      "SUBMITTED": ["UNDER_REVIEW", "DISMISSED"],
-      "UNDER_REVIEW": ["RESOLVED", "DISMISSED"],
-      "RESOLVED": [],
-      "DISMISSED": []
-    }
+    "workflow": { "SUBMITTED": ["UNDER_REVIEW", "DISMISSED"], "UNDER_REVIEW": ["RESOLVED", "DISMISSED"], "RESOLVED": [], "DISMISSED": [] }
   }
 }
 ```
@@ -617,237 +670,158 @@ curl -X POST http://localhost:4000/api/v1/reports/WD-7JCF5-FRY4F-QNEEB/messages 
 ## Status workflow
 
 ```
-                    ┌──────────────────────────────┐
-                    │                              ▼
-   ┌───────────┐    │    ┌──────────────┐    ┌───────────┐
-   │ SUBMITTED │────┴───▶│ UNDER_REVIEW │───▶│ DISMISSED │  (final)
-   └───────────┘         └──────────────┘    └───────────┘
-                                │
-                                ▼
-                          ┌──────────┐
-                          │ RESOLVED │  (final)
-                          └──────────┘
+   ┌───────────┐        ┌──────────────┐        ┌──────────┐
+   │ SUBMITTED │───────▶│ UNDER_REVIEW │───────▶│ RESOLVED │  final
+   └─────┬─────┘        └──────┬───────┘        └──────────┘
+         │                     │                ┌───────────┐
+         └─────────────────────┴───────────────▶│ DISMISSED │  final
+                                                └───────────┘
 ```
 
 | From | May move to |
 | --- | --- |
 | `SUBMITTED` | `UNDER_REVIEW`, `DISMISSED` |
 | `UNDER_REVIEW` | `RESOLVED`, `DISMISSED` |
-| `RESOLVED` | — final |
-| `DISMISSED` | — final |
+| `RESOLVED` · `DISMISSED` | — (final) |
 
-**Rules enforced by the API**
+- Every report starts at `SUBMITTED`; clients cannot choose the initial status.
+- Skipping review, moving backwards and reopening a closed case are `422`, and
+  the response lists the transitions that are allowed.
+- Requesting the current status is `409`, not a silent no-op.
+- **Transitions are atomic.** The write is one `findOneAndUpdate` filtered on
+  the status that was validated, so concurrent moderators cannot both win (see
+  [the example](#concurrent-moderators)). A rejected transition changes nothing.
+- Closing a case sets `closedAt` (starting the retention clock) and clears
+  `awaitingReporter` **in that same write**. Closed cases accept no new updates
+  or messages.
+- Every accepted transition appends a `PUBLIC` update recording the new status,
+  the message and the moderator.
 
-- A report starts at `SUBMITTED`. Clients cannot set the initial status.
-- `SUBMITTED → RESOLVED` is rejected: nothing is resolved before it is reviewed.
-- Backwards moves (`UNDER_REVIEW → SUBMITTED`) are rejected.
-- `RESOLVED` and `DISMISSED` are terminal — a closed case cannot be reopened or
-  receive new updates. A reporter can trust that the outcome they were shown is
-  final.
-- Re-applying the current status returns `409`, not a silent no-op.
-- Transitions are **atomic**. The write is a single `findOneAndUpdate` filtered
-  on the status that was validated, so if two moderators act at once
-  (`UNDER_REVIEW → RESOLVED` and `UNDER_REVIEW → DISMISSED`) exactly one wins and
-  the other gets `409` with `expectedStatus` / `currentStatus` in the details.
-  Notes use the same technique, so one can never land on a case closed a moment
-  earlier.
-- A rejected transition changes nothing: the status stays put and no update is
-  written.
-- Every accepted transition appends an update recording the new status, the
-  message and which moderator made it.
-
-The rules live in one table in
-[`src/utils/statusWorkflow.js`](src/utils/statusWorkflow.js) — adding a status
-means editing that table, not hunting through controllers.
+The rules live in one table, [`src/utils/statusWorkflow.js`](src/utils/statusWorkflow.js).
 
 ---
 
 ## Anonymity and privacy design
 
-### What is stored against a report
+The goal: **the system should be unable to identify a reporter, even if the
+database is stolen.** Each mechanism below is enforced in code and covered by
+tests.
 
-A report document has exactly these fields, and Mongoose runs in strict mode so
-nothing else can be written:
+### What a report stores — and what it never does
 
-```jsonc
-{
-  "_id":          "…",        // internal, never shown to the reporter
-  "caseCodeHash": "…",        // SHA-256 of the case code — never the code itself
-  "category":     "SECURITY",
-  "description":  "…",        // the reporter's own words
-  "evidenceUrl":  "https://…" // optional, or null
-  "status":       "SUBMITTED",
-  "updates":      [ … ],      // moderator notes
-  "createdAt":    "…",
-  "updatedAt":    "…"
-}
+A stored report has exactly these fields (a test asserts the key set after a
+request carrying `X-Forwarded-For`, a fingerprintable `User-Agent` and a
+`Referer`):
+
+```
+_id · caseCodeHash · category · description · evidenceUrl · status
+updates[] · messages[] · awaitingReporter · closedAt · createdAt · updatedAt · __v
 ```
 
-### What is deliberately **not** stored
-
-| Not stored | Why |
+| Never stored | Why |
 | --- | --- |
-| IP address | The single most identifying field in a normal web request |
-| User-agent, `Referer` | Browser/device fingerprinting, and referrer leaks *where* the report was filed from |
-| Email, name, username, employee id | There is no reporter account at all |
-| Session or cookie | Nothing to correlate two submissions by the same person |
-| Uploaded files | Documents carry metadata (author, device, GPS). Only an external URL is accepted |
-| HTTP access logs | No `morgan`-style request logging. Access logs are where identifying data silently accumulates |
+| IP address | The most identifying field in a normal request |
+| User-agent, `Referer` | Fingerprinting; the referrer reveals *where* the report was filed from |
+| Email, name, username | Reporters have no account at all |
+| Session or cookie | Nothing links two actions by the same person |
+| Uploaded files | Documents carry metadata (author, device, GPS); only an external link is accepted |
+| HTTP access logs | No `morgan`-style request logging — that is where identifying data quietly piles up |
 
-This is enforced in three places, not one: the **Zod schema** rejects unknown
-fields with `400`, the **Mongoose schema** would drop them anyway, and the
-**presenters** in `report.service.js` build responses field by field instead of
-serialising documents. A test asserts the exact set of keys on a stored report
-after a request carrying `X-Forwarded-For`, a fingerprintable `User-Agent` and a
-`Referer`.
+This is enforced three times over: **Zod `strictObject`** rejects unknown fields
+with `400`, **Mongoose strict mode** would drop them anyway, and **explicit
+presenters** build every response field by field.
 
 ### The case code
 
 ```
-WD-7JCF5-FRY4F-QNEEB
-   └──────┬──────┘
-   15 characters from a 30-character alphabet ≈ 73 bits of entropy
+WD-HGGHE-6M4D5-5Y7KY      15 characters from a 30-character alphabet ≈ 73 bits of entropy
 ```
 
 - Generated with `crypto.randomInt()` (a CSPRNG), never `Math.random()`.
-- Alphabet excludes `0 O 1 I L U` — the characters people misread when copying a
-  code off a screen.
-- **Only the SHA-256 hash is stored.** A stolen database dump cannot be turned
-  back into working case codes; an attacker would have to guess a ~73-bit value.
-- Shown exactly once, in the submission response. If a reporter loses it, nobody
-  — including an administrator with database access — can recover it. That is
-  the cost of not knowing who they are, and the API says so in plain language in
-  the response message.
-- SHA-256 rather than bcrypt is correct here: the input is high-entropy random
-  data (not a human-chosen password), so there is nothing to brute-force, and
-  lookups stay a single indexed query.
+- The alphabet drops `0 O 1 I L U`, the characters people misread.
+- **Only its SHA-256 is stored.** A stolen database cannot be turned back into
+  working codes. SHA-256 rather than bcrypt is correct here: the input is
+  high-entropy random data, so there is nothing to brute-force, and lookups stay
+  one indexed query.
+- Shown exactly once. If a reporter loses it, nobody — not even an administrator
+  with database access — can recover it. The submission response says so plainly.
 
 ### Timestamp coarsening
 
 An exact submission time is an identifier in disguise: *"the report arrived at
-14:32:07"* can be lined up against badge swipes, VPN logs or who stepped out of
-a meeting. So the submission time is **rounded down to a 15-minute bucket**
-(`TIMESTAMP_BUCKET_MINUTES`) *before it is written*. The precise time never
-reaches the database.
+14:32:07"* can be matched against badge swipes or who left a meeting early. So
+every reporter-originated time is **rounded down to a 15-minute window before it
+is written** (`TIMESTAMP_BUCKET_MINUTES`):
 
-That covers more than `createdAt`:
+- `createdAt` and the initial `updatedAt` of a report;
+- the report's **`_id`** — a MongoDB ObjectId embeds its creation time to the
+  second, so report ids are generated from the window start plus 8 random bytes;
+- each reporter message's `createdAt`. Messages have **no per-message ObjectId**
+  (it would embed the exact time), and a reply moves the report's `updatedAt`
+  forward only to the window start (`$max`, with Mongoose timestamps disabled for
+  that write).
 
-- `updatedAt` starts at the same coarse value.
-- **The report `_id` too.** A MongoDB ObjectId embeds its creation time to the
-  second, so coarsening only `createdAt` would leave the real time readable from
-  the id. Report ids are built from the bucket time plus 8 random bytes instead.
-
-**Trade-off:** reports filed in the same window share a `createdAt` and their
-relative order inside that window is unknowable — by design. Lists sort by
-`createdAt` then `_id`, so pagination stays stable. Moderator actions keep exact
-timestamps; they describe staff activity, not the reporter's.
-
-### Retention
-
-The less data kept, the less there is to leak, subpoena or cross-reference.
-When a report becomes `RESOLVED` or `DISMISSED`, `closedAt` is set **in the same
-atomic write as the status**, and a MongoDB TTL index deletes the report
-`RETENTION_DAYS_AFTER_CLOSE` days later (default 365; `0` disables it).
-
-- Open reports have `closedAt: null` and are never touched by the TTL index.
-- MongoDB's TTL monitor runs about once a minute, so deletion happens shortly
-  after the deadline, not to the second.
-- Indexes are synchronised at startup (`syncIndexes()`), so changing the
-  retention period takes effect on the next restart. Mongoose's default
-  `autoIndex` only creates indexes, so a changed TTL would otherwise conflict
-  with the existing one and `0` would never remove it.
-- A test runs MongoDB's TTL monitor every second and checks that a report closed
-  400 days ago is really deleted while an open one survives.
+Moderator actions keep exact times — they describe staff activity, not the
+reporter's.
 
 ### PII warnings on free text
 
-Reporters often undo their own anonymity — signing off with an email address,
-or mentioning their staff number. On submission the description goes through
-[`piiScanner.js`](src/utils/piiScanner.js), which looks for emails, phone
-numbers, `@handles`, employee/student/badge IDs and phrases like *"my name is"*.
+Reporters often undo their own anonymity. Descriptions and replies go through
+[`piiScanner.js`](src/utils/piiScanner.js), which detects emails, phone and long
+personal numbers, `@handles`, employee/student/badge IDs and phrases like *"my
+name is"*.
 
-```json
-"warnings": [
-  { "code": "POSSIBLE_EMAIL", "message": "The text appears to contain an email address. Moderators will see this text. …" }
-]
-```
-
-- **It never blocks a submission.** A false positive that rejects a real report
-  is far worse than a warning the reporter can ignore, so it deliberately leans
-  towards over-warning (a 10-digit invoice number is flagged as a phone number).
+- **It never blocks.** Rejecting a real report over a false positive would be
+  far worse than an unnecessary warning, so it leans towards over-warning.
 - **It returns codes, never the matched text.** Nothing it finds is logged,
   stored or echoed back.
-- It is a pure function with its own unit tests, including the false positives
-  it must *not* raise (dates, versions, IPs, CVE ids, amounts).
+- It is a pure function, with unit tests for what it must catch *and* for
+  ordinary report text it must not flag (dates, versions, IPs, CVE ids, amounts).
 
-### Audit log: watching the watchers
+### Retention
 
-Moderators can read every report, so their access needs accountability too.
-Every `LOGIN`, `VIEW_REPORT`, `UPDATE_STATUS`, `ADD_UPDATE` and admin account
-action is appended to an `AuditLog` collection as
-`{ seq, moderator, action, report?, targetModerator?, createdAt, prevHash, hash }`.
+When a report becomes `RESOLVED` or `DISMISSED`, `closedAt` is set in the same
+atomic write, and a MongoDB **TTL index** deletes the report
+`RETENTION_DAYS_AFTER_CLOSE` days later (default 365; `0` disables it). Open
+reports have `closedAt: null` and are never touched. Indexes are synchronised at
+startup, so a changed retention period takes effect on the next restart. A test
+runs MongoDB's TTL monitor every second and checks that a report closed 400 days
+ago is really deleted while an open one survives.
 
-- **Tamper-evident hash chain.** `hash = SHA-256(prevHash + this entry's
-  fields)` and `seq` has no gaps. `GET /admin/audit-log/verify` recomputes the
-  chain and pinpoints the first edited, re-hashed, deleted or re-ordered entry.
-- **No reporter data, no IPs.** Entries hold ids and an action name — never
-  report text, case codes, IP addresses or user-agents. The audit log watches
-  staff; it must not become a second copy of the reports.
-- **Reads fail closed.** `VIEW_REPORT` is written *before* the report is
-  returned: if the view cannot be recorded, the moderator does not see the
-  report.
-- **Concurrent appends never fork the chain.** A unique index on `seq` lets one
-  writer win; the others re-read the new head and retry (`503` if the log stays
-  contended).
-- **Limits, stated honestly.** The chain proves the log was not *changed*; it
-  cannot by itself prove the newest entries were not *removed*. That is why
-  `verify` returns `headHash` — store it somewhere outside the database (a
-  ticket, a signed email) and compare later. Status changes and their audit
-  entry are two writes, not one transaction; a replica-set deployment could wrap
-  them in a transaction.
+### Caching
+
+`Cache-Control: no-store` and `Pragma: no-cache` are sent on every response from
+the reporter, auth, moderator and admin routers — including their own
+`400`/`404`/`409`/`429` errors. A cached tracking page on a
+shared computer — or in a corporate proxy — would reveal that someone looked up
+a whistleblowing case, and the submission response carries the case code itself.
 
 ### What each audience can see
 
-| | Reporter (case code) | Moderator (JWT) |
-| --- | --- | --- |
-| Status, timestamps | ✅ | ✅ |
-| Category | ✅ | ✅ |
-| Public moderator updates | ✅ | ✅ |
-| Follow-up message thread | ✅ (side only: `REPORTER` / `MODERATOR`) | ✅ (with moderator name) |
-| Description / evidence URL | ❌ | ✅ |
-| Internal report id | ❌ | ✅ |
-| Which moderator wrote an update | ❌ | ✅ |
-| `INTERNAL` moderator notes | ❌ | ✅ |
-| Any other report | ❌ | ✅ (that is their job) |
+| | Reporter (case code) | Moderator | Admin |
+| --- | :-: | :-: | :-: |
+| Status, category, submission window | ✅ | ✅ | ✅ |
+| `PUBLIC` moderator updates | ✅ | ✅ | ✅ |
+| `INTERNAL` moderator notes | ❌ | ✅ | ✅ |
+| Message thread | ✅ side only (`REPORTER` / `MODERATOR`) | ✅ with moderator name | ✅ with moderator name |
+| Which moderator acted | ❌ | ✅ | ✅ |
+| Description and evidence link | ❌ | ✅ | ✅ |
+| Internal report id, `closedAt` | ❌ | ✅ | ✅ |
+| Other reports | ❌ | ✅ | ✅ |
+| Staff accounts, audit log | ❌ | ❌ | ✅ |
+| Case code, case-code hash, any reporter identity | ❌ | ❌ | ❌ |
 
-The reporter's view omits the description on purpose: the tracking endpoint
-exists to answer *"what is happening with my case?"*, and if a code is
-shoulder-surfed or found in a browser history, the leak is limited to a status
-rather than the full allegation. Moderator identity is hidden from the reporter
-for the moderator's safety, while still being recorded internally for
-accountability.
+The reporter's view leaves out their own description on purpose: the tracking
+page answers *"what is happening with my case?"*, so a shoulder-surfed code
+reveals a status, not the allegation. The reporter's `lastUpdatedAt` is
+computed from public events only — the stored `updatedAt` also moves when an
+internal note is added, which would reveal private discussion.
 
-### The one honest exception: rate limiting
+### Rate limiting — the one honest exception
 
-Rate limiting keys buckets by IP address. That IP is held **in memory for the
-length of the window only** — never written to the database, a log line or a
-report. Without it, the tracking endpoint could be brute-forced and the
-submission endpoint flooded. It is a deliberate trade, documented rather than
-hidden.
-
-### Threat model — what this design does and does not stop
-
-| Threat | Outcome |
-| --- | --- |
-| Database dump is leaked | Reports readable, but no reporter identity exists in them and case codes cannot be recovered from hashes |
-| Reporter includes their own email/phone/ID in the text | Flagged back to them as a warning (codes only); the report is still accepted |
-| Timing correlation (matching submission time to someone's movements) | Only a 15-minute window is stored — in `createdAt` and inside the ObjectId |
-| Someone finds a reporter's case code | Sees status and updates only — not the report body |
-| Attacker guesses case codes | ~73 bits of entropy plus a lookup rate limit |
-| Malicious client posts `email` alongside a report | Rejected with `400`; nothing is stored |
-| Moderator account is compromised | Attacker sees report contents — but still no reporter identity. Every report they open is in the audit log, and an admin can deactivate the account, which loses access on its very next request |
-| A moderator snoops on reports, or someone edits the audit trail to hide it | Every view is logged before the report is shown; the hash chain exposes edited, deleted or re-ordered entries |
-| Network-level observation (ISP, corporate proxy) | **Out of scope.** Reporters should use Tor or a network they do not control — no server-side design can fix this |
+Rate limiters key on IP address. That IP is held **in memory for the window
+only** — never written to the database, a log line or a report. Without it the
+tracking endpoint could be brute-forced and the submission endpoint flooded.
 
 ---
 
@@ -856,137 +830,223 @@ hidden.
 | Control | Implementation |
 | --- | --- |
 | Security headers | `helmet()` globally; a relaxed CSP scoped to `/api-docs` only, so Swagger UI works without weakening the API |
-| Authentication | JWT (HS256) with `issuer` and `audience` claims verified on every request |
-| Account re-check | The moderator is re-loaded from the database per request, so a deactivated account loses access immediately, not at token expiry |
-| Password storage | bcrypt, cost factor 12; the hash is `select: false` and stripped from JSON |
-| User enumeration | Unknown username, wrong password and deactivated account all return the same `401` message |
-| Timing attacks | A dummy bcrypt comparison runs when the username does not exist, so failed logins take the same time |
-| No self-registration | The first admin is created via CLI; further accounts only by an admin |
-| Roles | `moderator` and `admin`. The role is re-checked against the database on every request: a token whose `role` claim no longer matches the account is rejected with `401`, so a demotion takes effect immediately and a promotion requires a fresh login |
-| Input validation | Zod on body, query and params; unknown keys rejected |
-| Injection | Validated-and-typed input into Mongoose; no string-built queries, no `$where`. Free-text search goes to a `$text` index, never into a `RegExp`, so there is nothing to escape and no ReDoS surface |
-| XSS via stored links | `evidenceUrl` is restricted to `http(s)`, blocking `javascript:` and `data:` payloads |
-| Caching | `Cache-Control: no-store` + `Pragma: no-cache` on every reporter, auth and moderator response — including errors — so no browser, proxy or CDN keeps a case code, a case status or a token |
-| Payload size | JSON bodies capped at 100 KB |
-| Rate limiting | Four separate limiters: global, submission, login, case lookup |
-| Error leakage | Unexpected errors are logged server-side and returned as a generic `500` — never a stack trace or driver message |
-| Secret management | All secrets in `.env` (gitignored); startup refuses a `JWT_SECRET` under 32 characters |
+| Authentication | HS256 JWT with `issuer` and `audience` verified on every request |
+| Account re-check | The account is re-loaded per request: a deactivated account loses access immediately, and a token whose `role` claim no longer matches the account is rejected (`401`) |
+| Authorisation | `requireRole('admin')` on the whole admin router — checks the database role, not the token claim |
+| Passwords | bcrypt (cost 12 by default), hash `select: false` and stripped from JSON; 12-character minimum for new accounts |
+| User enumeration | Unknown user, wrong password and inactive account all return the same `401`, and a dummy bcrypt comparison equalises timing |
+| No self-registration | First admin via CLI; further accounts only by an admin |
+| Validation | Zod on body, query and params; `strictObject` everywhere, so unknown keys are a `400` |
+| Injection / ReDoS | Typed input into Mongoose; no string-built queries or `$where`; search uses a `$text` index, never a `RegExp` built from input |
+| Stored XSS via links | `evidenceUrl` must be `http(s)` — `javascript:` and `data:` are rejected |
+| Race conditions | Status changes, notes, messages and account (de)activation are single atomic updates filtered on the expected state |
+| Payload size | JSON bodies capped at 100 KB (`413`) |
+| Rate limiting | Global, submission, login, case lookup and reporter-reply limiters; `TRUST_PROXY` for correct client IPs behind a proxy |
+| Caching | `no-store` on every response from the reporter, auth, moderator and admin routers, including their errors |
+| Error leakage | Unexpected errors are logged server-side; clients get a generic `500` (the message is added as `debug` outside production only) |
+| Accountability | Hash-chained audit log of logins, report views, status changes, notes, messages and admin actions |
+| Secrets | `.env` is gitignored and excluded from the Docker build context; startup refuses a weak `JWT_SECRET` |
+| Container | Non-root user, production dependencies only, install scripts disabled, database not exposed |
 
 ---
 
-## Testing
+## Threat model
+
+| Threat | What happens |
+| --- | --- |
+| Database dump is leaked | Report contents are readable, but no reporter identity exists in them, case codes cannot be recovered from their hashes, and timestamps only place a report within a 15-minute window |
+| **Timing correlation** — matching when a report or reply arrived to someone's movements | Only the window start is stored, in `createdAt`, inside the ObjectId and on every reporter message |
+| **PII in free text** — the reporter names or contacts themselves | Flagged back to them as a warning (codes only) on submission and on every reply; the API never repeats the text |
+| Someone finds a reporter's case code | They see status, public updates and the thread — not the description or evidence — and could post a reply as the reporter. The code is the credential, so it must be kept private |
+| Case-code guessing | ~73 bits of entropy plus a lookup rate limit |
+| Client posts `email` / `reporterName` alongside a report | Rejected with `400`; nothing stored |
+| Cached responses on a shared machine or proxy | `Cache-Control: no-store` on every reporter, auth, moderator and admin route |
+| **A moderator abuses access** (snooping, or quietly altering a case) | Every report they open is logged *before* it is shown, along with every status change, note and message, all tied to their account |
+| **Someone edits the audit trail to hide it** | The hash chain exposes edited, re-hashed, deleted and re-ordered entries; anchoring `headHash` externally also exposes the newest entries being removed |
+| A moderator account is compromised | Contents are exposed, never reporter identity; an admin deactivation cuts it off on its next request, and its activity is in the audit log |
+| Two moderators act on one case at once | Exactly one write wins; the other gets `409` |
+| Network-level observation (ISP, corporate proxy, the server's own network logs) | **Out of scope.** The application stores no IP, but the network still sees the connection. Reporters needing that protection should use Tor or a network they do not control |
+
+---
+
+## Testing and quality
 
 ```bash
-npm test                  # everything
-npm test -- reports       # one suite
-npm test -- --coverage    # with coverage
+npm test                  # 285 tests across 19 suites
+npm run test:coverage     # with coverage
+npm run lint              # ESLint, zero warnings allowed
+npm run format:check      # Prettier
 ```
 
-Integration tests run against a real MongoDB started in memory
-(`mongodb-memory-server`), so indexes, unique constraints and aggregations
-behave exactly as in production. No database installation and no shared test
-database are needed.
+Integration tests run against a **real MongoDB** started in memory
+(`mongodb-memory-server`), so indexes, unique constraints, text search,
+aggregation and TTL deletion behave as in production — without a database
+install or a shared test database.
 
-**84 tests across 6 suites:**
+**Coverage:** 94.5% statements · 84.2% branches · 93.1% functions · 94.9% lines.
 
-| Suite | Covers |
+| Suite | What it proves |
 | --- | --- |
-| `caseCode.test.js` | Code format, alphabet safety, 5,000-code uniqueness, normalization, hash stability |
-| `statusWorkflow.test.js` | Every legal and illegal transition, terminal states, unknown status input |
-| `reports.test.js` | Submission, validation, tracking, case-code normalization, 404/400 paths, and privacy assertions on the stored document |
-| `auth.test.js` | Login, user enumeration, tampered/forged/expired/wrong-audience tokens, deactivated and deleted accounts |
-| `moderation.test.js` | Listing, filtering, pagination, detail, all workflow transitions, closed-case rules, and a full end-to-end reporter journey |
-| `rateLimit.test.js` | `429` behaviour on submission, tracking and login, plus `RateLimit` headers |
+| `reports` | Submission, validation, PII warnings, tracking, case-code normalisation, privacy of the stored document, timestamp coarsening, `no-store` caching |
+| `moderation` | Listing, filters, pagination, detail, every workflow transition, internal-note visibility, the end-to-end reporter journey |
+| `search` | Text search, stemming, regex metacharacters as plain text, date ranges, evidence filter, sorting, combined filters |
+| `messages` | The full two-way conversation, identity never leaking, coarse reporter times, closed-case and thread-size rejection, validation |
+| `concurrency` | Two conflicting transitions in parallel (forced by a read barrier): exactly one `200` and one `409`; stale reads; notes racing a close |
+| `retention` / `retentionDisabled` | `closedAt` set atomically, TTL index definition, real deletion by MongoDB, disabled retention |
+| `admin` | `401` / `403` on every admin route, account creation and validation, (de)activation, self-deactivation, role re-validation |
+| `audit` | What is recorded and what is not, no reporter data or IPs in entries, fail-closed views, tamper detection (edit, re-hash, delete, re-order), concurrent appends |
+| `auth` | Login, enumeration resistance, tampered / forged / expired / wrong-audience tokens, deactivated and deleted accounts |
+| `rateLimit` / `trustProxy` | `429`s on every limited route, shared-bucket failure without `TRUST_PROXY`, per-client buckets with it |
+| `openapi` | The spec documents exactly the served routes, every `$ref` resolves, protected operations declare auth and `401`, success responses have schemas |
+| `errorHandler` | Every error-to-status mapping, generic `500`s, `413` |
+| `seed` | Demo data shape, valid audit chain, idempotent accounts, production refusal |
+| Unit suites | `caseCode`, `statusWorkflow`, `timeBuckets`, `piiScanner` (including false positives) |
 
-Edge cases covered include: malformed JSON, oversized descriptions,
-`javascript:` evidence URLs, extra identifying fields in the payload, malformed
-report ids (`400`, not a Mongoose cast error), re-applying the current status
-(`409`), and confirming that a rejected transition leaves the report untouched.
+Beyond the Jest suite:
 
----
-
-## Assumptions and design decisions
-
-**1. The case code is the only reporter credential.**
-No account means no password reset, no email recovery. Losing the code means
-losing access to the case. That is the honest consequence of true anonymity, so
-the API states it explicitly in the submission response instead of quietly
-implying recovery is possible.
-
-**2. Case codes are hashed, not encrypted.**
-Encryption implies a key that can decrypt — another secret that can leak.
-Hashing means there is simply nothing to steal. The trade-off: nobody can look
-up a case *for* a reporter, by design.
-
-**3. Reporters do not see their own report body when tracking.**
-Minimum necessary disclosure. The endpoint answers "what is happening?" — if a
-code is compromised, the allegation itself is not exposed.
-
-**4. There is no public moderator registration endpoint.**
-An open `/auth/register` on a service holding sensitive reports would be an
-open door. Accounts are provisioned deliberately via
-`npm run create:moderator`.
-
-**5. Status updates are embedded in the report document.**
-Updates are always read with their report, are few, and are bounded at 500
-characters. Embedding gives atomic writes and one query instead of a join. A
-separate collection would be the right call only if updates grew unbounded.
-
-**6. No HTTP request logging.**
-A conventional `morgan` line contains IP, user-agent and path — exactly the
-data this project promises not to keep. Only lifecycle and error events are
-logged, without request bodies.
-
-**7. Evidence is a URL, not a file upload.**
-Uploaded documents carry metadata that can deanonymise the sender (author name,
-device, GPS). Accepting a link keeps that risk with the reporter, where they can
-control it, and keeps the service stateless.
-
-**8. Categories and statuses are fixed enums.**
-They are part of the contract, exposed at `GET /meta` so clients discover them
-at runtime rather than hard-coding them.
-
-**9. `422` for workflow violations, `400` for malformed input.**
-A client can tell "you sent nonsense" from "that move isn't allowed", and the
-`422` body lists the transitions that *are* allowed.
-
-**10. Two roles, checked against the database.**
-`admin` can do everything a `moderator` can, plus manage accounts. The JWT's
-`role` claim is compared with the stored account on every request, so a token
-can never carry privileges the account no longer has. Admins cannot deactivate
-themselves — which also guarantees at least one active admin always remains,
-because the last one has nobody else who could remove them. Self-deactivation
-is a `403` (an action this caller may not take), while re-deactivating an
-inactive account is a `409` (the state already is what was asked for).
-
-**11. JWTs are stateless with a 2-hour expiry.**
-No token blocklist. Immediate revocation is instead achieved by deactivating the
-account, which is checked on every request.
-
-**12. The OpenAPI spec is hand-written in one file.**
-Rather than scattering JSDoc across routes, the whole contract is readable
-top-to-bottom in `src/config/swagger.js`, reviewable in a diff and exportable
-as-is from `/api-docs.json`.
-
-**13. `app.js` and `server.js` are separate.**
-Tests drive the app with Supertest without opening a port or touching a real
-database.
+- The OpenAPI document passes `redocly lint` with no errors or warnings.
+- The [Postman collection](docs/WhistleDrop.postman_collection.json) runs the
+  full reporter, moderator and admin journeys — 27 requests, 48 assertions —
+  headless with `newman`.
+- CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, format
+  check and tests on **Node 20 and 22**, then builds the Docker image and boots
+  the compose stack, waiting for both health checks.
 
 ---
 
-## Known limitations and next steps
+## Design decisions
 
-- **Network-level anonymity is out of scope.** The server never records an IP,
-  but a network observer still sees the connection. Reporters needing protection
-  from that should use Tor.
-- **Rate limits are in-memory.** Correct for a single instance; a multi-instance
-  deployment needs a shared store (Redis) so all instances see the same counts.
-- **No notifications.** Reporters must poll their case code to see a
-  moderator's question. That is the anonymity-preserving choice — any push
-  channel (email, SMS, web push) is an identifier.
+Each decision trades something away; the trade-off is stated alongside it.
+
+1. **The case code is the only reporter credential.** No account means no
+   recovery. Losing the code means losing access — the honest price of real
+   anonymity, stated in the submission response rather than hidden.
+2. **Case codes are hashed, not encrypted.** Encryption implies a key that could
+   decrypt, which is one more secret to leak. With a hash there is nothing to
+   steal. *Trade-off:* nobody can look a case up on a reporter's behalf.
+3. **Reporters do not see their own description when tracking.** Minimum
+   disclosure: a compromised code reveals a status, not the allegation.
+   *Trade-off:* reporters cannot re-read what they wrote.
+4. **No public registration.** An open sign-up route on a service holding
+   sensitive reports is an open door. The first admin is provisioned from the
+   CLI; admins create the rest.
+5. **Updates and messages are embedded in the report.** They are always read
+   with their report, so embedding gives atomic writes and one query instead of
+   a join. *Trade-off:* the document must stay bounded, so threads are capped at
+   200 messages.
+6. **Every state change is one conditional atomic write** (`findOneAndUpdate`
+   filtered on the expected state), not read-validate-save. It closes the race
+   where two moderators both pass a check; when nothing matches, a re-read turns
+   the outcome into a precise `404` or `409`.
+7. **`400` / `409` / `422` mean different things.** `400`: you sent something
+   malformed. `409`: the resource's current state conflicts. `422`: well-formed,
+   but the workflow forbids it — and the body says what *is* allowed.
+8. **Timestamps are coarsened at write time, including inside the ObjectId.**
+   Storing the precise time and hiding it on output would leave it in every
+   backup. *Trade-off:* the order of reports within a window is unknowable,
+   lists use `_id` as a stable tie-breaker, and a reporter message can show an
+   earlier time than the question it answers (thread order is authoritative).
+9. **PII detection warns and never blocks, and reports categories, not
+   matches.** Blocking on a heuristic would lose real reports; echoing matches
+   would make the scanner itself a leak. *Trade-off:* it over-warns, and the
+   warning arrives after the description is already stored.
+10. **Retention is a database TTL index, not a cron job.** There is nothing extra
+    to run or forget. Indexes are synced at startup because Mongoose's
+    `autoIndex` only ever creates indexes: a changed TTL would conflict with the
+    old one, and `0` would never remove it.
+11. **Internal notes do not move the reporter's `lastUpdatedAt`.** That value is
+    derived from public events, since the stored `updatedAt` would reveal that
+    moderators discussed the case privately.
+12. **Two roles, checked against the database on every request.** A token can
+    never carry privileges its account no longer has: demotion applies
+    immediately, and promotion needs a fresh login. Admins cannot deactivate
+    themselves (`403`), which also guarantees at least one active admin always
+    remains.
+13. **The audit log is a hash chain with a gap-free `seq`.** It is
+    tamper-evident without extra infrastructure. A unique index on `seq` keeps
+    concurrent appends from forking the chain, and views are logged *before*
+    the report is returned (fail closed). *Trade-off:* a chain stored in the
+    same database cannot detect its newest entries being deleted, so
+    `/verify` returns `headHash` for external anchoring.
+14. **The audit log stores ids and actions only.** It watches staff and must not
+    become a second copy of the reports, or a new home for IPs.
+15. **No HTTP request logging, and `no-store` on sensitive responses.** Access
+    logs and caches are the two places identifying data accumulates silently.
+16. **Evidence is a URL, never an upload.** File metadata can deanonymise the
+    sender; a link leaves that risk under the reporter's control and keeps the
+    service free of file storage.
+17. **`TRUST_PROXY=0` maps to `false`, not to the number 0.** express-rate-limit
+    only warns about a stray `X-Forwarded-For` when the setting is exactly
+    `false` — and that warning is how a forgotten setting surfaces.
+18. **Search uses a MongoDB text index, not regular expressions.** It gives
+    stemming, and since user input never becomes a `RegExp`, there is nothing to
+    escape and no ReDoS surface. *Trade-off:* word-based, English stemming, no
+    substring matching.
+19. **The OpenAPI document is hand-written in one file, and tests hold it to the
+    code.** It reads top to bottom and diffs cleanly. The `openapi` suite fails
+    if a route is undocumented, a documented route does not exist, or a `$ref`
+    dangles.
+20. **Tests use a real in-memory MongoDB, bound explicitly to 127.0.0.1.**
+    supertest's default `listen(0)` binds `[::]` but connects to `127.0.0.1`,
+    which on macOS occasionally reached another local process. Binding the
+    loopback address explicitly fixed an intermittent hang.
+21. **The bcrypt cost is configurable.** Production uses 12; tests use bcrypt's
+    minimum of 4, which took the suite from ~80 s to ~11 s. The timing-equalising
+    dummy hash always uses the same cost as real hashes.
+
+---
+
+## Screenshots
+
+Images live in [`docs/screenshots/`](docs/screenshots/); its README lists the
+seven shots to capture (`npm run seed`, then Swagger UI):
+
+| Screenshot | Shows |
+| --- | --- |
+| `01-swagger-overview.png` | Swagger UI with all tags |
+| `02-submit-report.png` | Submission response with `caseCode` and `warnings` |
+| `03-track-case.png` | Tracking response with updates and messages |
+| `04-moderator-login.png` | Login and the **Authorize** dialog |
+| `05-filtered-list.png` | Search with `q`, `category` and `hasEvidence` |
+| `06-status-change-422.png` | `SUBMITTED → RESOLVED` rejected with `allowedTransitions` |
+| `07-audit-log-verify.png` | `audit-log/verify` returning `intact: true` |
+
+---
+
+## Known limitations
+
+- **Network anonymity is out of scope.** The application never stores an IP, but
+  networks see connections. Reporters at risk should use Tor.
+- **The PII scanner is a heuristic.** It is pattern-based and English-centric: it
+  misses a plain name in a sentence, can be evaded, and over-warns on things like
+  10-digit invoice numbers. Its warning arrives *after* submission — there is no
+  pre-submit check endpoint, so an identifying description is already stored.
+- **Report lists are not audit-logged.** Opening a report is recorded, but the
+  list view's 140-character previews are not.
+- **Audit entries and the actions they record are separate writes.** Without a
+  replica set there are no multi-document transactions, so a crash between the
+  two could leave an action unrecorded. A replica-set deployment could wrap both
+  in one transaction. The chain also cannot detect truncation of its newest
+  entries unless `headHash` is anchored outside the database.
+- **Rate limits are per instance and in memory.** A multi-instance deployment
+  needs a shared store such as Redis.
+- **JWTs are stateless.** There is no logout or token blocklist; revocation means
+  deactivating the account (effective immediately) or waiting for expiry (2 h).
+- **No reporter notifications.** Reporters must poll their case code to see a
+  question. Any push channel — email, SMS, web push — would be an identifier.
+- **Retention is approximate and database-only.** MongoDB's TTL monitor runs
+  about once a minute, and backups or replicas taken outside the live database
+  follow their own retention.
+- **The compose stack runs MongoDB without authentication**, relying on its
+  private network and unpublished port. Production should enable MongoDB auth
+  and TLS (or use a managed service).
+- **A lost case code is unrecoverable** — by design, as above.
+- **Coverage gaps:** `src/config/db.js` runs whenever the server, CLI or seed
+  script starts (the Postman run and the CI Docker job both boot the server), but
+  not inside the Jest suite, which manages its own in-memory connection.
 
 ---
 
 ## License
 
-MIT
+[MIT](LICENSE)
