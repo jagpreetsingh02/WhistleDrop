@@ -21,6 +21,12 @@ const errorHandler = require('./middleware/errorHandler');
 function createApp() {
   const app = express();
 
+  // Behind a load balancer every request arrives from the balancer's IP. If
+  // Express is not told how many proxy hops to trust, all reporters share a
+  // single rate-limit bucket — one abuser locks everyone out. TRUST_PROXY sets
+  // the hop count; the resolved IP is used only as an in-memory limiter key.
+  app.set('trust proxy', env.trustProxy);
+
   // Sensible security headers (HSTS, no-sniff, frameguard, hidden X-Powered-By).
   app.use(helmet());
 

@@ -68,6 +68,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `MONGODB_URI` | — | **Required.** MongoDB connection string |
 | `JWT_SECRET` | — | **Required.** Min. 32 characters |
 | `JWT_EXPIRES_IN` | `2h` | Moderator session length |
+| `TRUST_PROXY` | `0` | Reverse-proxy hops in front of the API — **set to `1` behind a load balancer** |
 | `CORS_ORIGIN` | `*` | Comma-separated allowlist, or `*` |
 | `RATE_LIMIT_WINDOW_MINUTES` | `15` | Window for all limiters |
 | `RATE_LIMIT_MAX` | `100` | Requests per window, whole API |
@@ -88,6 +89,14 @@ provisioned from the CLI:
 ```bash
 npm run create:moderator -- --username alice --password "Str0ngPassphrase!" --name "Ethics Desk"
 ```
+
+> **Deploying behind a load balancer?** Set `TRUST_PROXY=1` (or the number of
+> proxy hops). Without it, Express sees every request as coming from the load
+> balancer's IP, so **all reporters share one rate-limit bucket** and a single
+> abuser can lock everyone out of submitting or tracking. Avoid `TRUST_PROXY=true`:
+> it trusts any `X-Forwarded-For` value, letting a client pick its own bucket and
+> bypass limits. A forgotten setting shows up in the logs as
+> `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
 
 ### 4. Run
 
@@ -768,8 +777,7 @@ database.
   but a network observer still sees the connection. Reporters needing protection
   from that should use Tor.
 - **Rate limits are in-memory.** Correct for a single instance; a multi-instance
-  deployment needs a shared store (Redis) and `app.set('trust proxy', 1)` behind
-  a load balancer so limiting keys off the real client IP.
+  deployment needs a shared store (Redis) so all instances see the same counts.
 - **No data retention policy yet.** Reports live forever. A real deployment
   should age out resolved cases (for example, delete 12 months after closure) —
   the less data kept, the less there is to leak.

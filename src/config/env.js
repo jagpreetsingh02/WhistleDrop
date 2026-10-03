@@ -19,6 +19,20 @@ require('dotenv').config({
 
 const isTest = process.env.NODE_ENV === 'test';
 
+/**
+ * Express `trust proxy` accepts a hop count, a boolean or a list of subnets.
+ * "0"/"false" map to `false` (not the number 0) on purpose: express-rate-limit
+ * only warns about a stray X-Forwarded-For header when the setting is exactly
+ * `false`, and that warning is how a forgotten TRUST_PROXY shows up in logs.
+ */
+function parseTrustProxy(value) {
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === '' || normalized === '0' || normalized === 'false') return false;
+  if (normalized === 'true') return true;
+  if (/^\d+$/.test(normalized)) return Number(normalized);
+  return value.trim();
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
@@ -34,6 +48,7 @@ const schema = z.object({
   JWT_EXPIRES_IN: z.string().default('2h'),
 
   CORS_ORIGIN: z.string().default('*'),
+  TRUST_PROXY: z.string().default('0'),
 
   RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
@@ -65,6 +80,7 @@ const env = {
     secret: raw.JWT_SECRET,
     expiresIn: raw.JWT_EXPIRES_IN,
   },
+  trustProxy: parseTrustProxy(raw.TRUST_PROXY),
   corsOrigin: raw.CORS_ORIGIN === '*' ? '*' : raw.CORS_ORIGIN.split(',').map((o) => o.trim()),
   rateLimit: {
     windowMs: raw.RATE_LIMIT_WINDOW_MINUTES * 60 * 1000,
@@ -76,3 +92,4 @@ const env = {
 };
 
 module.exports = env;
+module.exports.parseTrustProxy = parseTrustProxy;
