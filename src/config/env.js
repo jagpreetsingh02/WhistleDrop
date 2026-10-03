@@ -46,6 +46,8 @@ const schema = z.object({
     ? z.string().default('test-secret-not-used-in-production')
     : z.string().min(32, 'JWT_SECRET must be at least 32 characters long'),
   JWT_EXPIRES_IN: z.string().default('2h'),
+  // bcrypt work factor for staff passwords. 4 is bcrypt's minimum (tests only).
+  BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(12),
 
   CORS_ORIGIN: z.string().default('*'),
   TRUST_PROXY: z.string().default('0'),
@@ -85,6 +87,7 @@ const env = {
     secret: raw.JWT_SECRET,
     expiresIn: raw.JWT_EXPIRES_IN,
   },
+  bcryptRounds: raw.BCRYPT_ROUNDS,
   trustProxy: parseTrustProxy(raw.TRUST_PROXY),
   privacy: {
     timestampBucketMinutes: raw.TIMESTAMP_BUCKET_MINUTES,

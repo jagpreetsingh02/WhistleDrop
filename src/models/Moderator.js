@@ -2,9 +2,9 @@
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const env = require('../config/env');
 const { ROLES, ROLE } = require('../utils/constants');
 
-const SALT_ROUNDS = 12;
 
 /**
  * A staff account (role `moderator` or `admin`). Staff are the only
@@ -48,7 +48,7 @@ const moderatorSchema = new mongoose.Schema(
 );
 
 moderatorSchema.statics.hashPassword = function hashPassword(plainPassword) {
-  return bcrypt.hash(plainPassword, SALT_ROUNDS);
+  return bcrypt.hash(plainPassword, env.bcryptRounds);
 };
 
 moderatorSchema.methods.verifyPassword = function verifyPassword(plainPassword) {

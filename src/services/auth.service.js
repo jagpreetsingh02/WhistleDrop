@@ -12,9 +12,10 @@ const { JWT_ISSUER, JWT_AUDIENCE, ROLE, AUDIT_ACTION } = require('../utils/const
  * A pre-computed hash of a throwaway password. When a login arrives for a
  * username that does not exist we still run one bcrypt comparison against it,
  * so a failed login takes the same time either way. Without this, response
- * timing quietly tells an attacker which usernames are real.
+ * timing quietly tells an attacker which usernames are real. It must use the
+ * same work factor as real hashes, or the timings would differ again.
  */
-const DUMMY_HASH = bcrypt.hashSync('timing-attack-mitigation-placeholder', 12);
+const DUMMY_HASH = bcrypt.hashSync('timing-attack-mitigation-placeholder', env.bcryptRounds);
 
 function signToken(moderator) {
   return jwt.sign(
