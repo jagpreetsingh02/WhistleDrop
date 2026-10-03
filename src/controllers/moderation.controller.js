@@ -1,0 +1,77 @@
+'use strict';
+
+const asyncHandler = require('../utils/asyncHandler');
+const reportService = require('../services/report.service');
+
+/** GET /api/v1/moderator/reports — list with optional filters and paging. */
+const listReports = asyncHandler(async (req, res) => {
+  const { status, category, page, limit, sort } = req.validated.query;
+
+  const { reports, pagination } = await reportService.listReports({
+    status,
+    category,
+    page,
+    limit,
+    sort,
+  });
+
+  res.status(200).json({
+    success: true,
+    data: reports.map(reportService.toModeratorSummary),
+    meta: { ...pagination, filters: { status: status || null, category: category || null } },
+  });
+});
+
+/** GET /api/v1/moderator/reports/:id */
+const getReport = asyncHandler(async (req, res) => {
+  const report = await reportService.getReportById(req.validated.params.id);
+
+  res.status(200).json({
+    success: true,
+    data: reportService.toModeratorView(report),
+  });
+});
+
+/** PATCH /api/v1/moderator/reports/:id/status — workflow-checked transition. */
+const updateStatus = asyncHandler(async (req, res) => {
+  const report = await reportService.updateReportStatus({
+    reportId: req.validated.params.id,
+    moderatorId: req.moderator._id,
+    nextStatus: req.validated.body.status,
+    message: req.validated.body.message,
+  });
+
+  res.status(200).json({
+    success: true,
+    message: `Report status updated to ${report.status}`,
+    data: reportService.toModeratorView(report),
+  });
+});
+
+/** POST /api/v1/moderator/reports/:id/updates — note for the reporter. */
+const addUpdate = asyncHandler(async (req, res) => {
+  const report = await reportService.addStatusUpdate({
+    reportId: req.validated.params.id,
+    moderatorId: req.moderator._id,
+    message: req.validated.body.message,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Update added',
+    data: reportService.toModeratorView(report),
+  });
+});
+
+/** GET /api/v1/moderator/stats — counts per status for a queue overview. */
+const getStats = asyncHandler(async (_req, res) => {
+  const breakdown = await reportService.getStatusBreakdown();
+  const total = Object.values(breakdown).reduce((sum, count) => sum + count, 0);
+
+  res.status(200).json({
+    success: true,
+    data: { total, byStatus: breakdown },
+  });
+});
+
+module.exports = { listReports, getReport, updateStatus, addUpdate, getStats };

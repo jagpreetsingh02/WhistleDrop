@@ -1,0 +1,647 @@
+'use strict';
+
+const { CATEGORIES, STATUSES } = require('../utils/constants');
+const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
+
+/**
+ * Hand-written OpenAPI 3 document.
+ *
+ * Kept in one file (rather than JSDoc comments spread across routes) so the
+ * contract can be read top-to-bottom, reviewed in a diff, and exported to any
+ * other tool as-is.
+ */
+
+const errorResponse = (description, example) => ({
+  description,
+  content: {
+    'application/json': {
+      schema: { $ref: '#/components/schemas/ErrorResponse' },
+      example,
+    },
+  },
+});
+
+const openApiSpec = {
+  openapi: '3.0.3',
+  info: {
+    title: 'WhistleDrop API',
+    version: '1.0.0',
+    description: [
+      '**Speak without being seen.**',
+      '',
+      'WhistleDrop accepts anonymous reports and lets the reporter follow the case',
+      'using a one-time case code — no account, no email, no session.',
+      '',
+      '### How to use this page',
+      '1. `POST /reports` and copy the `caseCode` from the response.',
+      '2. `GET /reports/{caseCode}` to see status and moderator updates.',
+      '3. `POST /auth/login` as a moderator, click **Authorize**, paste the token.',
+      '4. Work the queue under `/moderator/*`.',
+      '',
+      '### Privacy',
+      'No IP address, user-agent, email or account is stored against a report.',
+      'Only a SHA-256 hash of the case code is persisted, so the code cannot be',
+      'recovered from the database — if a reporter loses it, the case is closed to them.',
+    ].join('\n'),
+    license: { name: 'MIT' },
+  },
+  servers: [{ url: '/api/v1', description: 'Current server' }],
+  tags: [
+    { name: 'Meta', description: 'Service metadata and health' },
+    { name: 'Reports (public)', description: 'Anonymous submission and tracking' },
+    { name: 'Auth', description: 'Moderator authentication' },
+    { name: 'Moderation', description: 'Protected moderator operations' },
+  ],
+  components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Paste the token returned by `POST /auth/login`.',
+      },
+    },
+    schemas: {
+      Category: { type: 'string', enum: [...CATEGORIES], example: 'SECURITY' },
+      Status: { type: 'string', enum: [...STATUSES], example: 'SUBMITTED' },
+
+      SubmitReportRequest: {
+        type: 'object',
+        required: ['category', 'description'],
+        additionalProperties: false,
+        properties: {
+          category: { $ref: '#/components/schemas/Category' },
+          description: {
+            type: 'string',
+            minLength: 20,
+            maxLength: 5000,
+            description: 'What happened. Avoid including details that identify you.',
+            example:
+              'Customer database backups are stored in a public bucket with no encryption or access control.',
+          },
+          evidenceUrl: {
+            type: 'string',
+            format: 'uri',
+            nullable: true,
+            maxLength: 2048,
+            description: 'Optional http(s) link to externally hosted evidence.',
+            example: 'https://example.com/evidence/2026-09-21',
+          },
+        },
+      },
+
+      SubmitReportResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          message: { type: 'string' },
+          data: {
+            type: 'object',
+            properties: {
+              caseCode: { type: 'string', example: 'WD-4K9TM-XQ7YB-2NHVR' },
+              category: { $ref: '#/components/schemas/Category' },
+              status: { $ref: '#/components/schemas/Status' },
+              submittedAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        },
+      },
+
+      ReporterUpdate: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', example: 'A moderator has started reviewing this case.' },
+          status: {
+            allOf: [{ $ref: '#/components/schemas/Status' }],
+            nullable: true,
+            description: 'Status this update moved the case to, or null for a note.',
+          },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+      },
+
+      TrackReportResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          data: {
+            type: 'object',
+            properties: {
+              category: { $ref: '#/components/schemas/Category' },
+              status: { $ref: '#/components/schemas/Status' },
+              submittedAt: { type: 'string', format: 'date-time' },
+              lastUpdatedAt: { type: 'string', format: 'date-time' },
+              isClosed: { type: 'boolean', example: false },
+              updates: {
+                type: 'array',
+                items: { $ref: '#/components/schemas/ReporterUpdate' },
+              },
+            },
+          },
+        },
+      },
+
+      ReportSummary: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: '66f1c0a4b6f4c2a1d8e3b9f2' },
+          category: { $ref: '#/components/schemas/Category' },
+          status: { $ref: '#/components/schemas/Status' },
+          descriptionPreview: { type: 'string' },
+          hasEvidence: { type: 'boolean' },
+          updateCount: { type: 'integer', example: 2 },
+          submittedAt: { type: 'string', format: 'date-time' },
+          lastUpdatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+
+      ReportDetail: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          category: { $ref: '#/components/schemas/Category' },
+          description: { type: 'string' },
+          evidenceUrl: { type: 'string', nullable: true },
+          status: { $ref: '#/components/schemas/Status' },
+          allowedTransitions: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/Status' },
+            description: 'Statuses this report may move to next.',
+          },
+          submittedAt: { type: 'string', format: 'date-time' },
+          lastUpdatedAt: { type: 'string', format: 'date-time' },
+          updates: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                message: { type: 'string' },
+                status: { type: 'string', nullable: true },
+                createdAt: { type: 'string', format: 'date-time' },
+                moderator: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    displayName: { type: 'string', example: 'Ethics Desk' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      LoginRequest: {
+        type: 'object',
+        required: ['username', 'password'],
+        additionalProperties: false,
+        properties: {
+          username: { type: 'string', example: 'moderator' },
+          password: { type: 'string', format: 'password', example: 'Str0ngPassphrase!' },
+        },
+      },
+
+      LoginResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: true },
+          message: { type: 'string', example: 'Login successful' },
+          data: {
+            type: 'object',
+            properties: {
+              token: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIs...' },
+              expiresIn: { type: 'string', example: '2h' },
+              moderator: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  username: { type: 'string' },
+                  displayName: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      UpdateStatusRequest: {
+        type: 'object',
+        required: ['status'],
+        additionalProperties: false,
+        properties: {
+          status: { $ref: '#/components/schemas/Status' },
+          message: {
+            type: 'string',
+            minLength: 5,
+            maxLength: 500,
+            description:
+              'Note shown to the reporter. Defaults to "Status changed to X" if omitted.',
+            example: 'We have opened an investigation and contacted the infrastructure team.',
+          },
+        },
+      },
+
+      AddUpdateRequest: {
+        type: 'object',
+        required: ['message'],
+        additionalProperties: false,
+        properties: {
+          message: {
+            type: 'string',
+            minLength: 5,
+            maxLength: 500,
+            example: 'Still in progress — we expect an outcome within two weeks.',
+          },
+        },
+      },
+
+      ErrorResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean', example: false },
+          error: {
+            type: 'object',
+            properties: {
+              message: { type: 'string' },
+              details: {
+                description: 'Field-level validation errors, or workflow context on a 422.',
+                nullable: true,
+                oneOf: [
+                  {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        field: { type: 'string', example: 'body.description' },
+                        message: { type: 'string' },
+                      },
+                    },
+                  },
+                  { type: 'object' },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+
+  paths: {
+    '/health': {
+      get: {
+        tags: ['Meta'],
+        summary: 'Liveness probe',
+        responses: {
+          200: {
+            description: 'Service is up',
+            content: {
+              'application/json': { example: { success: true, data: { status: 'ok' } } },
+            },
+          },
+        },
+      },
+    },
+
+    '/meta': {
+      get: {
+        tags: ['Meta'],
+        summary: 'Categories, statuses and the status workflow',
+        responses: {
+          200: {
+            description: 'Service metadata',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: {
+                    categories: CATEGORIES,
+                    statuses: STATUSES,
+                    workflow: ALLOWED_TRANSITIONS,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+
+    '/reports': {
+      post: {
+        tags: ['Reports (public)'],
+        summary: 'Submit an anonymous report',
+        description:
+          'No authentication. The returned `caseCode` is shown once and is the only way to track the case.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/SubmitReportRequest' },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Report stored, case code issued',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SubmitReportResponse' },
+              },
+            },
+          },
+          400: errorResponse('Validation failed', {
+            success: false,
+            error: {
+              message: 'Validation failed',
+              details: [
+                { field: 'body.description', message: 'description must be at least 20 characters' },
+              ],
+            },
+          }),
+          429: errorResponse('Too many submissions from this network', {
+            success: false,
+            error: {
+              message: 'Too many reports submitted from this network. Please try again later.',
+            },
+          }),
+        },
+      },
+    },
+
+    '/reports/{caseCode}': {
+      get: {
+        tags: ['Reports (public)'],
+        summary: 'Track a case with its code',
+        description:
+          'Case-insensitive; dashes and spaces are ignored. Returns status and moderator updates only.',
+        parameters: [
+          {
+            name: 'caseCode',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            example: 'WD-4K9TM-XQ7YB-2NHVR',
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Current status of the case',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/TrackReportResponse' },
+              },
+            },
+          },
+          400: errorResponse('Malformed case code', {
+            success: false,
+            error: {
+              message: 'Validation failed',
+              details: [{ field: 'params.caseCode', message: 'caseCode is not a valid case code' }],
+            },
+          }),
+          404: errorResponse('Unknown case code', {
+            success: false,
+            error: { message: 'No case found for that code. Check the code and try again.' },
+          }),
+          429: errorResponse('Too many lookups', {
+            success: false,
+            error: { message: 'Too many case lookups. Please try again later.' },
+          }),
+        },
+      },
+    },
+
+    '/auth/login': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Moderator login',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/LoginRequest' } },
+          },
+        },
+        responses: {
+          200: {
+            description: 'JWT issued',
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/LoginResponse' } },
+            },
+          },
+          400: errorResponse('Validation failed'),
+          401: errorResponse('Bad credentials', {
+            success: false,
+            error: { message: 'Invalid username or password' },
+          }),
+          429: errorResponse('Too many login attempts'),
+        },
+      },
+    },
+
+    '/auth/me': {
+      get: {
+        tags: ['Auth'],
+        summary: 'Current moderator profile',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: 'The moderator the token belongs to' },
+          401: errorResponse('Missing, invalid or expired token'),
+        },
+      },
+    },
+
+    '/moderator/reports': {
+      get: {
+        tags: ['Moderation'],
+        summary: 'List reports, optionally filtered',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'status', in: 'query', schema: { $ref: '#/components/schemas/Status' } },
+          { name: 'category', in: 'query', schema: { $ref: '#/components/schemas/Category' } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+          },
+          {
+            name: 'sort',
+            in: 'query',
+            schema: { type: 'string', enum: ['newest', 'oldest'], default: 'newest' },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Paginated list of report summaries',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ReportSummary' },
+                    },
+                    meta: {
+                      type: 'object',
+                      properties: {
+                        page: { type: 'integer' },
+                        limit: { type: 'integer' },
+                        total: { type: 'integer' },
+                        totalPages: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Invalid filter value'),
+          401: errorResponse('Missing or invalid token'),
+        },
+      },
+    },
+
+    '/moderator/reports/{id}': {
+      get: {
+        tags: ['Moderation'],
+        summary: 'Read one report in full',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'Full report',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: { $ref: '#/components/schemas/ReportDetail' },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Malformed report id'),
+          401: errorResponse('Missing or invalid token'),
+          404: errorResponse('Report not found'),
+        },
+      },
+    },
+
+    '/moderator/reports/{id}/status': {
+      patch: {
+        tags: ['Moderation'],
+        summary: 'Move a report to the next status',
+        description:
+          'Allowed transitions: SUBMITTED → UNDER_REVIEW | DISMISSED, UNDER_REVIEW → RESOLVED | DISMISSED. RESOLVED and DISMISSED are final.',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/UpdateStatusRequest' } },
+          },
+        },
+        responses: {
+          200: {
+            description: 'Status changed',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/ReportDetail' },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Validation failed'),
+          401: errorResponse('Missing or invalid token'),
+          404: errorResponse('Report not found'),
+          409: errorResponse('Report is already in that status', {
+            success: false,
+            error: { message: 'Report is already UNDER_REVIEW' },
+          }),
+          422: errorResponse('Illegal status transition', {
+            success: false,
+            error: {
+              message: 'Cannot change status from SUBMITTED to RESOLVED',
+              details: {
+                currentStatus: 'SUBMITTED',
+                requestedStatus: 'RESOLVED',
+                allowedTransitions: ['UNDER_REVIEW', 'DISMISSED'],
+              },
+            },
+          }),
+        },
+      },
+    },
+
+    '/moderator/reports/{id}/updates': {
+      post: {
+        tags: ['Moderation'],
+        summary: 'Add a note for the reporter without changing status',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/AddUpdateRequest' } },
+          },
+        },
+        responses: {
+          201: { description: 'Update added' },
+          400: errorResponse('Validation failed'),
+          401: errorResponse('Missing or invalid token'),
+          404: errorResponse('Report not found'),
+          409: errorResponse('Case is closed', {
+            success: false,
+            error: { message: 'Report is closed (RESOLVED) and cannot receive new updates' },
+          }),
+        },
+      },
+    },
+
+    '/moderator/stats': {
+      get: {
+        tags: ['Moderation'],
+        summary: 'Report counts per status',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Queue overview',
+            content: {
+              'application/json': {
+                example: {
+                  success: true,
+                  data: { total: 12, byStatus: { SUBMITTED: 5, UNDER_REVIEW: 4, RESOLVED: 3 } },
+                },
+              },
+            },
+          },
+          401: errorResponse('Missing or invalid token'),
+        },
+      },
+    },
+  },
+};
+
+/** Swagger UI tweaks: persist the token between reloads, no "try it" noise. */
+const swaggerUiOptions = {
+  customSiteTitle: 'WhistleDrop API docs',
+  swaggerOptions: {
+    persistAuthorization: true,
+    displayRequestDuration: true,
+    docExpansion: 'list',
+  },
+};
+
+module.exports = { openApiSpec, swaggerUiOptions };
