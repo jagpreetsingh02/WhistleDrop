@@ -61,6 +61,21 @@ const addUpdate = asyncHandler(async (req, res) => {
   });
 });
 
+/** POST /api/v1/moderator/reports/:id/messages — ask the reporter a question. */
+const sendMessage = asyncHandler(async (req, res) => {
+  const report = await reportService.addModeratorMessage({
+    reportId: req.validated.params.id,
+    moderatorId: req.moderator._id,
+    body: req.validated.body.body,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Message sent to the reporter',
+    data: reportService.toModeratorView(report),
+  });
+});
+
 /** GET /api/v1/moderator/stats — counts per status for a queue overview. */
 const getStats = asyncHandler(async (_req, res) => {
   const breakdown = await reportService.getStatusBreakdown();
@@ -72,4 +87,4 @@ const getStats = asyncHandler(async (_req, res) => {
   });
 });
 
-module.exports = { listReports, getReport, updateStatus, addUpdate, getStats };
+module.exports = { listReports, getReport, updateStatus, addUpdate, sendMessage, getStats };

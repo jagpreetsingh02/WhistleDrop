@@ -62,6 +62,7 @@ const schema = z.object({
   REPORT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   TRACK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+  REPORTER_MESSAGE_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -100,6 +101,7 @@ const env = {
     reportMax: raw.REPORT_RATE_LIMIT_MAX,
     authMax: raw.AUTH_RATE_LIMIT_MAX,
     trackMax: raw.TRACK_RATE_LIMIT_MAX,
+    reporterMessageMax: raw.REPORTER_MESSAGE_RATE_LIMIT_MAX,
   },
 };
 

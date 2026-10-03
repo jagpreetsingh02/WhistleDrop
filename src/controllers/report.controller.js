@@ -43,4 +43,21 @@ const trackReport = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { submitReport, trackReport };
+/**
+ * POST /api/v1/reports/:caseCode/messages — the reporter replies.
+ * Returns the updated case (as the reporter sees it) plus PII warnings.
+ */
+const sendMessage = asyncHandler(async (req, res) => {
+  const { report, warnings } = await reportService.addReporterMessage({
+    caseCode: req.validated.params.caseCode,
+    body: req.validated.body.body,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Message sent',
+    data: { ...reportService.toReporterView(report), warnings },
+  });
+});
+
+module.exports = { submitReport, trackReport, sendMessage };

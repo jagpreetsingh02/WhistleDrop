@@ -68,6 +68,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `MONGODB_URI` | — | **Required.** MongoDB connection string |
 | `JWT_SECRET` | — | **Required.** Min. 32 characters |
 | `JWT_EXPIRES_IN` | `2h` | Moderator session length |
+| `BCRYPT_ROUNDS` | `12` | bcrypt work factor for staff passwords (4–15; tests use 4) |
 | `TRUST_PROXY` | `0` | Reverse-proxy hops in front of the API — **set to `1` behind a load balancer** |
 | `TIMESTAMP_BUCKET_MINUTES` | `15` | Reporter-originated timestamps are rounded down to this window (`0` = exact) |
 | `RETENTION_DAYS_AFTER_CLOSE` | `365` | Closed reports are deleted this many days after closing (`0` = keep forever) |
@@ -77,6 +78,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `REPORT_RATE_LIMIT_MAX` | `5` | Report submissions per window |
 | `AUTH_RATE_LIMIT_MAX` | `10` | Login attempts per window |
 | `TRACK_RATE_LIMIT_MAX` | `20` | Case-code lookups per window |
+| `REPORTER_MESSAGE_RATE_LIMIT_MAX` | `10` | Reporter replies per window |
 
 `.env` is gitignored; `.env.example` is the committed template. Startup
 validates every variable with Zod and **exits with a clear message** if
@@ -213,7 +215,8 @@ Base URL: `/api/v1`
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `POST` | `/reports` | Submit an anonymous report, receive a case code |
-| `GET` | `/reports/:caseCode` | Track a case: status + moderator updates |
+| `GET` | `/reports/:caseCode` | Track a case: status, public updates and the message thread |
+| `POST` | `/reports/:caseCode/messages` | Reply to moderators anonymously (returns PII warnings) |
 | `GET` | `/meta` | Categories, statuses and the status workflow |
 | `GET` | `/health` | Liveness probe (also at the root `/health`) |
 
@@ -226,7 +229,8 @@ Base URL: `/api/v1`
 | `GET` | `/moderator/reports` | List, search and filter — `?status=&category=&q=&from=&to=&hasEvidence=&sort=&page=&limit=` |
 | `GET` | `/moderator/reports/:id` | Full report with description and update history |
 | `PATCH` | `/moderator/reports/:id/status` | Move the report to a new status |
-| `POST` | `/moderator/reports/:id/updates` | Add a note without changing status |
+| `POST` | `/moderator/reports/:id/updates` | Add a public update or internal note without changing status |
+| `POST` | `/moderator/reports/:id/messages` | Ask the reporter a question (sets `awaitingReporter`) |
 | `GET` | `/moderator/stats` | Report counts per status |
 
 ### Admin — `Authorization: Bearer <token>` with the `admin` role
@@ -521,6 +525,35 @@ appear on the tracking endpoint, and they do not move the reporter's
 `lastUpdatedAt` — otherwise the reporter could tell that moderators had been
 discussing their case privately.
 
+### Anonymous follow-up conversation
+
+Moderators often need one more detail. They can ask through the case, and the
+reporter answers with nothing but the case code:
+
+```bash
+# moderator asks — the case is flagged awaitingReporter=true
+curl -X POST http://localhost:4000/api/v1/moderator/reports/$ID/messages \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{ "body": "Which repository are the credentials in?" }'
+
+# reporter sees it on the tracking page (awaitingYourReply: true) and replies
+curl -X POST http://localhost:4000/api/v1/reports/WD-7JCF5-FRY4F-QNEEB/messages \
+  -H "Content-Type: application/json" \
+  -d '{ "body": "It is the infra-scripts repo, in the deploy folder." }'
+```
+
+- The reporter sees `from: "MODERATOR"`, never which moderator. Moderators see
+  who on their side wrote each message.
+- Reporter messages get the same PII scan as the description (`warnings[]`), a
+  coarse timestamp, and no per-message ObjectId (which would embed the exact
+  time). Thread order is the array order.
+- Writes are atomic `$push` updates whose filter also requires an open case, so
+  a reply can never land on a case closed a moment earlier (`409`). Closing a
+  case clears `awaitingReporter`.
+- `GET /moderator/reports?awaitingReporter=true` is the "waiting on reporter"
+  queue. Threads are capped at 200 messages to keep the embedded document
+  bounded.
+
 ### 10. Queue overview
 
 ```json
@@ -747,7 +780,8 @@ action is appended to an `AuditLog` collection as
 | --- | --- | --- |
 | Status, timestamps | ✅ | ✅ |
 | Category | ✅ | ✅ |
-| Moderator update messages | ✅ | ✅ |
+| Public moderator updates | ✅ | ✅ |
+| Follow-up message thread | ✅ (side only: `REPORTER` / `MODERATOR`) | ✅ (with moderator name) |
 | Description / evidence URL | ❌ | ✅ |
 | Internal report id | ❌ | ✅ |
 | Which moderator wrote an update | ❌ | ✅ |
@@ -915,8 +949,9 @@ database.
   from that should use Tor.
 - **Rate limits are in-memory.** Correct for a single instance; a multi-instance
   deployment needs a shared store (Redis) so all instances see the same counts.
-- **No notifications.** Reporters must poll their case code. That is the
-  anonymity-preserving choice — any push channel is an identifier.
+- **No notifications.** Reporters must poll their case code to see a
+  moderator's question. That is the anonymity-preserving choice — any push
+  channel (email, SMS, web push) is an identifier.
 
 ---
 

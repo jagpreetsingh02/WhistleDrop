@@ -2,7 +2,14 @@
 
 const mongoose = require('mongoose');
 const env = require('../config/env');
-const { CATEGORIES, STATUSES, STATUS, VISIBILITIES, VISIBILITY } = require('../utils/constants');
+const {
+  CATEGORIES,
+  STATUSES,
+  STATUS,
+  VISIBILITIES,
+  VISIBILITY,
+  MESSAGE_FROM,
+} = require('../utils/constants');
 
 /**
  * A moderator note attached to a report.
@@ -39,6 +46,25 @@ const statusUpdateSchema = new mongoose.Schema(
     },
   },
   { timestamps: { createdAt: true, updatedAt: false }, _id: true }
+);
+
+/**
+ * One message in the anonymous follow-up thread between moderators and the
+ * reporter.
+ *
+ * `_id: false` is deliberate: an ObjectId embeds its creation time to the
+ * second, which would undo the coarsening applied to reporter `createdAt`.
+ * Thread order is the array order. `moderator` is set on MODERATOR messages
+ * for internal accountability and is never shown to the reporter.
+ */
+const messageSchema = new mongoose.Schema(
+  {
+    from: { type: String, required: true, enum: Object.values(MESSAGE_FROM) },
+    body: { type: String, required: true, trim: true, maxlength: 1000 },
+    moderator: { type: mongoose.Schema.Types.ObjectId, ref: 'Moderator', default: null },
+    createdAt: { type: Date, required: true },
+  },
+  { _id: false }
 );
 
 /**
@@ -90,6 +116,16 @@ const reportSchema = new mongoose.Schema(
     updates: {
       type: [statusUpdateSchema],
       default: [],
+    },
+    messages: {
+      type: [messageSchema],
+      default: [],
+    },
+    // True while a moderator question is waiting for the reporter's reply.
+    awaitingReporter: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
     // Set in the same atomic write that moves the report to RESOLVED or
     // DISMISSED. Drives the retention TTL index below.

@@ -17,3 +17,5 @@ process.env.RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX || '10000';
 process.env.REPORT_RATE_LIMIT_MAX = process.env.REPORT_RATE_LIMIT_MAX || '10000';
 process.env.AUTH_RATE_LIMIT_MAX = process.env.AUTH_RATE_LIMIT_MAX || '10000';
 process.env.TRACK_RATE_LIMIT_MAX = process.env.TRACK_RATE_LIMIT_MAX || '10000';
+process.env.REPORTER_MESSAGE_RATE_LIMIT_MAX =
+  process.env.REPORTER_MESSAGE_RATE_LIMIT_MAX || '10000';

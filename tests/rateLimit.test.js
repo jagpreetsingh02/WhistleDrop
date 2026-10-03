@@ -9,6 +9,7 @@
 process.env.REPORT_RATE_LIMIT_MAX = '2';
 process.env.TRACK_RATE_LIMIT_MAX = '3';
 process.env.AUTH_RATE_LIMIT_MAX = '2';
+process.env.REPORTER_MESSAGE_RATE_LIMIT_MAX = '2';
 
 const request = require('supertest');
 const createApp = require('../src/app');
@@ -61,6 +62,19 @@ describe('rate limiting', () => {
 
     expect(blocked.status).toBe(429);
     expect(blocked.body.error.message).toMatch(/too many login attempts/i);
+  });
+
+  it('throttles reporter replies', async () => {
+    const send = () =>
+      request(app).post('/api/v1/reports/WD-AAAAA-BBBBB-CCCCC/messages').send({ body: 'Hello?' });
+
+    expect((await send()).status).toBe(404);
+    expect((await send()).status).toBe(404);
+    const blocked = await send();
+
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.error.message).toMatch(/too many messages/i);
+    expect(blocked.headers['cache-control']).toBe('no-store');
   });
 
   it('sends standard RateLimit headers so clients can back off politely', async () => {

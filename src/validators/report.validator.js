@@ -101,6 +101,7 @@ const listReportsQuerySchema = z
       )
       .optional(),
     hasEvidence: booleanQueryField('hasEvidence').optional(),
+    awaitingReporter: booleanQueryField('awaitingReporter').optional(),
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(20),
     sort: z
@@ -146,6 +147,15 @@ const addUpdateSchema = z.strictObject({
     .default(VISIBILITY.PUBLIC),
 });
 
+/** Follow-up message, from either side of the conversation. */
+const messageSchema = z.strictObject({
+  body: z
+    .string({ message: 'body is required' })
+    .trim()
+    .min(1, 'body must not be empty')
+    .max(1000, 'body must be at most 1000 characters'),
+});
+
 module.exports = {
   submitReportSchema,
   trackReportParamsSchema,
@@ -153,4 +163,5 @@ module.exports = {
   reportIdParamsSchema,
   updateStatusSchema,
   addUpdateSchema,
+  messageSchema,
 };

@@ -166,28 +166,68 @@ const openApiSpec = {
         },
       },
 
+      Message: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', enum: ['REPORTER', 'MODERATOR'], example: 'MODERATOR' },
+          body: { type: 'string', maxLength: 1000, example: 'Which repository are the credentials in?' },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            description:
+              'Reporter messages carry the start of their time bucket, not the exact time. Thread order is authoritative.',
+          },
+        },
+      },
+
+      MessageRequest: {
+        type: 'object',
+        required: ['body'],
+        additionalProperties: false,
+        properties: {
+          body: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 1000,
+            example: 'It is the infra-scripts repo, in the deploy folder.',
+          },
+        },
+      },
+
+      ReporterCase: {
+        type: 'object',
+        properties: {
+          category: { $ref: '#/components/schemas/Category' },
+          status: { $ref: '#/components/schemas/Status' },
+          submittedAt: { type: 'string', format: 'date-time' },
+          lastUpdatedAt: {
+            type: 'string',
+            format: 'date-time',
+            description: 'Latest change visible to the reporter (internal notes do not count).',
+          },
+          isClosed: { type: 'boolean', example: false },
+          awaitingYourReply: {
+            type: 'boolean',
+            example: true,
+            description: 'A moderator has asked a question that has not been answered yet.',
+          },
+          updates: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/ReporterUpdate' },
+          },
+          messages: {
+            type: 'array',
+            description: 'The follow-up thread. Never says which moderator wrote a message.',
+            items: { $ref: '#/components/schemas/Message' },
+          },
+        },
+      },
+
       TrackReportResponse: {
         type: 'object',
         properties: {
           success: { type: 'boolean', example: true },
-          data: {
-            type: 'object',
-            properties: {
-              category: { $ref: '#/components/schemas/Category' },
-              status: { $ref: '#/components/schemas/Status' },
-              submittedAt: { type: 'string', format: 'date-time' },
-              lastUpdatedAt: {
-                type: 'string',
-                format: 'date-time',
-                description: 'Latest change visible to the reporter (internal notes do not count).',
-              },
-              isClosed: { type: 'boolean', example: false },
-              updates: {
-                type: 'array',
-                items: { $ref: '#/components/schemas/ReporterUpdate' },
-              },
-            },
-          },
+          data: { $ref: '#/components/schemas/ReporterCase' },
         },
       },
 
@@ -200,6 +240,8 @@ const openApiSpec = {
           descriptionPreview: { type: 'string' },
           hasEvidence: { type: 'boolean' },
           updateCount: { type: 'integer', example: 2 },
+          messageCount: { type: 'integer', example: 1 },
+          awaitingReporter: { type: 'boolean', example: true },
           submittedAt: { type: 'string', format: 'date-time' },
           lastUpdatedAt: { type: 'string', format: 'date-time' },
         },
@@ -220,6 +262,26 @@ const openApiSpec = {
           },
           submittedAt: { type: 'string', format: 'date-time' },
           lastUpdatedAt: { type: 'string', format: 'date-time' },
+          awaitingReporter: { type: 'boolean', example: false },
+          messages: {
+            type: 'array',
+            items: {
+              allOf: [
+                { $ref: '#/components/schemas/Message' },
+                {
+                  type: 'object',
+                  properties: {
+                    moderator: {
+                      type: 'object',
+                      nullable: true,
+                      description: 'Author of a MODERATOR message; null for reporter messages.',
+                      properties: { id: { type: 'string' }, displayName: { type: 'string' } },
+                    },
+                  },
+                },
+              ],
+            },
+          },
           closedAt: {
             type: 'string',
             format: 'date-time',
@@ -570,6 +632,74 @@ const openApiSpec = {
       },
     },
 
+    '/reports/{caseCode}/messages': {
+      post: {
+        tags: ['Reports (public)'],
+        summary: 'Reply to moderators anonymously',
+        description:
+          'Uses only the case code. Clears `awaitingYourReply`. The text is scanned for identifying details and `warnings` are returned (codes only). Rejected with 409 once the case is closed.',
+        parameters: [
+          {
+            name: 'caseCode',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            example: 'WD-4K9TM-XQ7YB-2NHVR',
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/MessageRequest' } },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Message added; returns the case as the reporter sees it, plus warnings',
+            headers: { 'Cache-Control': { $ref: '#/components/headers/CacheControlNoStore' } },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    message: { type: 'string', example: 'Message sent' },
+                    data: {
+                      allOf: [
+                        { $ref: '#/components/schemas/ReporterCase' },
+                        {
+                          type: 'object',
+                          properties: {
+                            warnings: {
+                              type: 'array',
+                              items: { $ref: '#/components/schemas/PiiWarning' },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Malformed case code or invalid body'),
+          404: errorResponse('Unknown case code', {
+            success: false,
+            error: { message: 'No case found for that code. Check the code and try again.' },
+          }),
+          409: errorResponse('Case is closed, or the thread is full', {
+            success: false,
+            error: { message: 'This case is closed (RESOLVED) and no longer accepts messages' },
+          }),
+          429: errorResponse('Too many messages', {
+            success: false,
+            error: { message: 'Too many messages sent. Please wait before replying again.' },
+          }),
+        },
+      },
+    },
+
     '/auth/login': {
       post: {
         tags: ['Auth'],
@@ -643,6 +773,12 @@ const openApiSpec = {
             name: 'hasEvidence',
             in: 'query',
             description: 'Only reports with (true) or without (false) an evidence link.',
+            schema: { type: 'string', enum: ['true', 'false'] },
+          },
+          {
+            name: 'awaitingReporter',
+            in: 'query',
+            description: 'Only cases waiting (true) or not waiting (false) for a reporter reply.',
             schema: { type: 'string', enum: ['true', 'false'] },
           },
           { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
@@ -824,6 +960,44 @@ const openApiSpec = {
             success: false,
             error: { message: 'Report is closed (RESOLVED) and cannot be changed' },
           }),
+        },
+      },
+    },
+
+    '/moderator/reports/{id}/messages': {
+      post: {
+        tags: ['Moderation'],
+        summary: 'Ask the reporter a question',
+        description:
+          'Adds a MODERATOR message to the anonymous thread and sets `awaitingReporter` until the reporter replies. The reporter sees the text but never who wrote it.',
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/MessageRequest' } },
+          },
+        },
+        responses: {
+          201: {
+            description: 'Message sent',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    message: { type: 'string', example: 'Message sent to the reporter' },
+                    data: { $ref: '#/components/schemas/ReportDetail' },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Validation failed'),
+          401: errorResponse('Missing or invalid token'),
+          404: errorResponse('Report not found'),
+          409: errorResponse('Case is closed, or the thread is full'),
         },
       },
     },

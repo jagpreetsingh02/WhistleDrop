@@ -40,12 +40,19 @@ const ROLE = Object.freeze({
 
 const ROLES = Object.freeze(Object.values(ROLE));
 
+/** Author side of a follow-up message. Never more specific than this for reporters. */
+const MESSAGE_FROM = Object.freeze({
+  REPORTER: 'REPORTER',
+  MODERATOR: 'MODERATOR',
+});
+
 /** Actions recorded in the tamper-evident audit log. */
 const AUDIT_ACTION = Object.freeze({
   LOGIN: 'LOGIN',
   VIEW_REPORT: 'VIEW_REPORT',
   UPDATE_STATUS: 'UPDATE_STATUS',
   ADD_UPDATE: 'ADD_UPDATE',
+  SEND_MESSAGE: 'SEND_MESSAGE',
   ADMIN_CREATE_ACCOUNT: 'ADMIN_CREATE_ACCOUNT',
   ADMIN_DEACTIVATE_ACCOUNT: 'ADMIN_DEACTIVATE_ACCOUNT',
   ADMIN_ACTIVATE_ACCOUNT: 'ADMIN_ACTIVATE_ACCOUNT',
@@ -67,6 +74,7 @@ module.exports = {
   VISIBILITIES,
   ROLE,
   ROLES,
+  MESSAGE_FROM,
   AUDIT_ACTION,
   AUDIT_ACTIONS,
   CASE_CODE_PREFIX,

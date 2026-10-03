@@ -49,10 +49,17 @@ const trackLimiter = createLimiter({
   message: 'Too many case lookups. Please try again later.',
 });
 
+/** Reporter replies: enough for a conversation, too few to flood a thread. */
+const reporterMessageLimiter = createLimiter({
+  limit: env.rateLimit.reporterMessageMax,
+  message: 'Too many messages sent. Please wait before replying again.',
+});
+
 module.exports = {
   createLimiter,
   globalLimiter,
   submitReportLimiter,
   loginLimiter,
   trackLimiter,
+  reporterMessageLimiter,
 };

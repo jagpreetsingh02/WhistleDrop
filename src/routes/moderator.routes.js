@@ -9,6 +9,7 @@ const {
   getReport,
   updateStatus,
   addUpdate,
+  sendMessage,
   getStats,
 } = require('../controllers/moderation.controller');
 const {
@@ -16,6 +17,7 @@ const {
   reportIdParamsSchema,
   updateStatusSchema,
   addUpdateSchema,
+  messageSchema,
 } = require('../validators/report.validator');
 
 const router = express.Router();
@@ -40,6 +42,12 @@ router.post(
   '/reports/:id/updates',
   validate({ params: reportIdParamsSchema, body: addUpdateSchema }),
   addUpdate
+);
+
+router.post(
+  '/reports/:id/messages',
+  validate({ params: reportIdParamsSchema, body: messageSchema }),
+  sendMessage
 );
 
 module.exports = router;

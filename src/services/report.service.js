@@ -8,11 +8,29 @@ const { coarsenDate, coarseObjectId } = require('../utils/timeBuckets');
 const { scanForPii } = require('../utils/piiScanner');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
 const auditService = require('./audit.service');
-const { STATUS, STATUSES, VISIBILITY, AUDIT_ACTION } = require('../utils/constants');
+const {
+  STATUS,
+  STATUSES,
+  VISIBILITY,
+  AUDIT_ACTION,
+  MESSAGE_FROM,
+} = require('../utils/constants');
 
 const MAX_CASE_CODE_ATTEMPTS = 5;
 const PREVIEW_LENGTH = 140;
 const OPEN_STATUSES = STATUSES.filter((status) => !isTerminal(status));
+
+/**
+ * Messages are embedded in the report, so the thread is capped to keep the
+ * document bounded (MongoDB's 16 MB limit, and the "embed only what stays
+ * small" rule). 200 messages is far beyond any real clarification exchange.
+ */
+const MAX_MESSAGES_PER_REPORT = 200;
+
+const MODERATOR_REFS = [
+  { path: 'updates.moderator', select: 'displayName' },
+  { path: 'messages.moderator', select: 'displayName' },
+];
 
 /* ---------------------------------------------------------------------------
  * Presenters
@@ -32,8 +50,8 @@ const isPublic = (update) => update.visibility !== VISIBILITY.INTERNAL;
  * privately.
  */
 function latestPublicActivity(report, publicUpdates) {
-  return publicUpdates.reduce(
-    (latest, update) => (update.createdAt > latest ? update.createdAt : latest),
+  return [...publicUpdates, ...(report.messages || [])].reduce(
+    (latest, item) => (item.createdAt > latest ? item.createdAt : latest),
     report.createdAt
   );
 }
@@ -48,10 +66,17 @@ function toReporterView(report) {
     submittedAt: report.createdAt,
     lastUpdatedAt: latestPublicActivity(report, publicUpdates),
     isClosed: isTerminal(report.status),
+    awaitingYourReply: Boolean(report.awaitingReporter),
     updates: publicUpdates.map((update) => ({
       message: update.message,
       status: update.status,
       createdAt: update.createdAt,
+    })),
+    // "from" says which side wrote it — never which moderator.
+    messages: (report.messages || []).map((message) => ({
+      from: message.from,
+      body: message.body,
+      createdAt: message.createdAt,
     })),
   };
 }
@@ -68,6 +93,13 @@ function toModeratorView(report) {
     submittedAt: report.createdAt,
     lastUpdatedAt: report.updatedAt,
     closedAt: report.closedAt || null,
+    awaitingReporter: Boolean(report.awaitingReporter),
+    messages: (report.messages || []).map((message) => ({
+      from: message.from,
+      body: message.body,
+      createdAt: message.createdAt,
+      moderator: message.from === MESSAGE_FROM.MODERATOR ? formatModerator(message.moderator) : null,
+    })),
     updates: report.updates.map((update) => ({
       id: update._id.toString(),
       message: update.message,
@@ -91,20 +123,24 @@ function toModeratorSummary(report) {
         : report.description,
     hasEvidence: Boolean(report.evidenceUrl),
     updateCount: report.updates.length,
+    messageCount: (report.messages || []).length,
+    awaitingReporter: Boolean(report.awaitingReporter),
     submittedAt: report.createdAt,
     lastUpdatedAt: report.updatedAt,
   };
 }
 
 /** Echoes the applied filters back in list metadata (null = not applied). */
-function describeFilters({ status, category, q, from, toExclusive, hasEvidence }) {
+function describeFilters({ status, category, q, from, toExclusive, hasEvidence, awaitingReporter }) {
+  const boolOrNull = (value) => (typeof value === 'boolean' ? value : null);
   return {
     status: status || null,
     category: category || null,
     q: q || null,
     from: from || null,
     toExclusive: toExclusive || null,
-    hasEvidence: typeof hasEvidence === 'boolean' ? hasEvidence : null,
+    hasEvidence: boolOrNull(hasEvidence),
+    awaitingReporter: boolOrNull(awaitingReporter),
   };
 }
 
@@ -183,7 +219,15 @@ const SORTS = Object.freeze({
  * bounded from Zod, and free text goes to the `$text` index — never into a
  * RegExp — so there is nothing to escape and no ReDoS surface.
  */
-function buildReportFilter({ status, category, q, from, toExclusive, hasEvidence }) {
+function buildReportFilter({
+  status,
+  category,
+  q,
+  from,
+  toExclusive,
+  hasEvidence,
+  awaitingReporter,
+}) {
   const filter = {};
   if (status) filter.status = status;
   if (category) filter.category = category;
@@ -197,6 +241,7 @@ function buildReportFilter({ status, category, q, from, toExclusive, hasEvidence
 
   if (hasEvidence === true) filter.evidenceUrl = { $ne: null };
   if (hasEvidence === false) filter.evidenceUrl = null;
+  if (typeof awaitingReporter === 'boolean') filter.awaitingReporter = awaitingReporter;
 
   return filter;
 }
@@ -222,7 +267,7 @@ async function listReports({ page = 1, limit = 20, sort = 'newest', ...filters }
 }
 
 async function getReportById(id) {
-  const report = await Report.findById(id).populate('updates.moderator', 'displayName');
+  const report = await Report.findById(id).populate(MODERATOR_REFS);
   if (!report) {
     throw AppError.notFound('Report not found');
   }
@@ -313,7 +358,12 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
   const updated = await Report.findOneAndUpdate(
     { _id: reportId, status: current.status },
     {
-      $set: { status: nextStatus, closedAt: isTerminal(nextStatus) ? new Date() : null },
+      $set: {
+        status: nextStatus,
+        closedAt: isTerminal(nextStatus) ? new Date() : null,
+        // A closed case cannot be answered, so it is not "waiting" any more.
+        ...(isTerminal(nextStatus) ? { awaitingReporter: false } : {}),
+      },
       $push: {
         updates: {
           message: message || `Status changed to ${nextStatus}`,
@@ -325,7 +375,7 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
       },
     },
     { new: true, runValidators: true }
-  ).populate('updates.moderator', 'displayName');
+  ).populate(MODERATOR_REFS);
 
   if (!updated) {
     return rejectStaleWrite(reportId, current.status);
@@ -352,13 +402,97 @@ async function addStatusUpdate({ reportId, moderatorId, message, visibility = VI
     { _id: reportId, status: { $in: OPEN_STATUSES } },
     { $push: { updates: { message, status: null, visibility, moderator: moderatorId } } },
     { new: true, runValidators: true }
-  ).populate('updates.moderator', 'displayName');
+  ).populate(MODERATOR_REFS);
 
   if (!updated) {
     return rejectStaleWrite(reportId);
   }
 
   await auditService.record({ moderatorId, action: AUDIT_ACTION.ADD_UPDATE, reportId: updated._id });
+  return updated;
+}
+
+/**
+ * Re-reads a report after an atomic message write matched nothing and turns
+ * the reason into the right error: unknown (404), closed (409) or full (409).
+ */
+async function rejectMessageWrite(filter) {
+  const report = await Report.findOne(filter).select('status messages');
+  if (!report) {
+    throw AppError.notFound('No case found for that code. Check the code and try again.');
+  }
+  if (isTerminal(report.status)) {
+    throw AppError.conflict(`This case is closed (${report.status}) and no longer accepts messages`);
+  }
+  throw AppError.conflict(
+    `This conversation has reached its limit of ${MAX_MESSAGES_PER_REPORT} messages`
+  );
+}
+
+/** Filter fragment: the case is open and the thread has room for one more. */
+const acceptsMessages = () => ({
+  status: { $in: OPEN_STATUSES },
+  [`messages.${MAX_MESSAGES_PER_REPORT - 1}`]: { $exists: false },
+});
+
+/**
+ * The reporter answers (or writes unprompted) using only their case code.
+ *
+ * Everything that could identify them is kept out of the write: the message
+ * time is coarsened like the submission time, and `timestamps: false` stops
+ * Mongoose from stamping the exact time into updatedAt — `$max` with the
+ * coarse time moves it forward without ever revealing more than the bucket.
+ */
+async function addReporterMessage({ caseCode, body }) {
+  const caseCodeHash = hashCaseCode(caseCode);
+  const sentAt = coarsenDate(new Date(), env.privacy.timestampBucketMinutes);
+
+  const updated = await Report.findOneAndUpdate(
+    { caseCodeHash, ...acceptsMessages() },
+    {
+      $push: { messages: { from: MESSAGE_FROM.REPORTER, body, createdAt: sentAt } },
+      $set: { awaitingReporter: false },
+      $max: { updatedAt: sentAt },
+    },
+    { new: true, runValidators: true, timestamps: false }
+  );
+
+  if (!updated) {
+    return rejectMessageWrite({ caseCodeHash });
+  }
+
+  return { report: updated, warnings: scanForPii(body) };
+}
+
+/** A moderator asks the reporter a question; the case is flagged as waiting. */
+async function addModeratorMessage({ reportId, moderatorId, body }) {
+  const updated = await Report.findOneAndUpdate(
+    { _id: reportId, ...acceptsMessages() },
+    {
+      $push: {
+        messages: {
+          from: MESSAGE_FROM.MODERATOR,
+          body,
+          moderator: moderatorId,
+          createdAt: new Date(),
+        },
+      },
+      $set: { awaitingReporter: true },
+    },
+    { new: true, runValidators: true }
+  ).populate(MODERATOR_REFS);
+
+  if (!updated) {
+    const exists = await Report.exists({ _id: reportId });
+    if (!exists) throw AppError.notFound('Report not found');
+    return rejectMessageWrite({ _id: reportId });
+  }
+
+  await auditService.record({
+    moderatorId,
+    action: AUDIT_ACTION.SEND_MESSAGE,
+    reportId: updated._id,
+  });
   return updated;
 }
 
@@ -376,6 +510,9 @@ module.exports = {
   viewReport,
   updateReportStatus,
   addStatusUpdate,
+  addReporterMessage,
+  addModeratorMessage,
+  MAX_MESSAGES_PER_REPORT,
   getStatusBreakdown,
   toReporterView,
   toModeratorView,
