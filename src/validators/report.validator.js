@@ -1,7 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
-const { CATEGORIES, STATUSES } = require('../utils/constants');
+const { CATEGORIES, STATUSES, VISIBILITIES, VISIBILITY } = require('../utils/constants');
 
 /** Accepts "Security", " security " or "SECURITY" and normalises to the enum. */
 const categoryField = z
@@ -83,6 +83,14 @@ const addUpdateSchema = z.strictObject({
     .trim()
     .min(5, 'message must be at least 5 characters')
     .max(500, 'message must be at most 500 characters'),
+  visibility: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .pipe(
+      z.enum(VISIBILITIES, { message: `visibility must be one of: ${VISIBILITIES.join(', ')}` })
+    )
+    .default(VISIBILITY.PUBLIC),
 });
 
 module.exports = {

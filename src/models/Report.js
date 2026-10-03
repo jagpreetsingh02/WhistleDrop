@@ -2,14 +2,16 @@
 
 const mongoose = require('mongoose');
 const env = require('../config/env');
-const { CATEGORIES, STATUSES, STATUS } = require('../utils/constants');
+const { CATEGORIES, STATUSES, STATUS, VISIBILITIES, VISIBILITY } = require('../utils/constants');
 
 /**
  * A moderator note attached to a report.
  *
- * `message` is written for the reporter, so moderators are told (in the API
- * docs) to keep it free of identifying detail. `moderator` is stored for
- * internal accountability and is never returned on the public tracking route.
+ * PUBLIC messages are written for the reporter, so moderators are told (in the
+ * API docs) to keep them free of identifying detail. INTERNAL notes are for
+ * moderators only and are filtered out of the reporter view. `moderator` is
+ * stored for internal accountability and is never returned on the public
+ * tracking route.
  */
 const statusUpdateSchema = new mongoose.Schema(
   {
@@ -24,6 +26,11 @@ const statusUpdateSchema = new mongoose.Schema(
       type: String,
       enum: [...STATUSES, null],
       default: null,
+    },
+    visibility: {
+      type: String,
+      enum: VISIBILITIES,
+      default: VISIBILITY.PUBLIC,
     },
     moderator: {
       type: mongoose.Schema.Types.ObjectId,

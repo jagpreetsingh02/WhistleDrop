@@ -24,6 +24,14 @@ const STATUS = Object.freeze({
   DISMISSED: 'DISMISSED',
 });
 
+/** Who may read a moderator update. INTERNAL notes never reach the reporter. */
+const VISIBILITY = Object.freeze({
+  PUBLIC: 'PUBLIC',
+  INTERNAL: 'INTERNAL',
+});
+
+const VISIBILITIES = Object.freeze(Object.values(VISIBILITY));
+
 const CASE_CODE_PREFIX = 'WD';
 
 /** Claims pinned on every moderator JWT, checked again on verification. */
@@ -34,6 +42,8 @@ module.exports = {
   CATEGORIES,
   STATUSES,
   STATUS,
+  VISIBILITY,
+  VISIBILITIES,
   CASE_CODE_PREFIX,
   JWT_ISSUER,
   JWT_AUDIENCE,

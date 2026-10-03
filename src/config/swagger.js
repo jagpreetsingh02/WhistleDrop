@@ -1,6 +1,6 @@
 'use strict';
 
-const { CATEGORIES, STATUSES } = require('../utils/constants');
+const { CATEGORIES, STATUSES, VISIBILITIES } = require('../utils/constants');
 const { PII_WARNING_CODES } = require('../utils/piiScanner');
 const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
 
@@ -71,6 +71,12 @@ const openApiSpec = {
     },
     schemas: {
       Category: { type: 'string', enum: [...CATEGORIES], example: 'SECURITY' },
+      Visibility: {
+        type: 'string',
+        enum: [...VISIBILITIES],
+        example: 'PUBLIC',
+        description: 'PUBLIC updates are shown to the reporter; INTERNAL notes are moderator-only.',
+      },
       Status: { type: 'string', enum: [...STATUSES], example: 'SUBMITTED' },
 
       SubmitReportRequest: {
@@ -163,7 +169,11 @@ const openApiSpec = {
               category: { $ref: '#/components/schemas/Category' },
               status: { $ref: '#/components/schemas/Status' },
               submittedAt: { type: 'string', format: 'date-time' },
-              lastUpdatedAt: { type: 'string', format: 'date-time' },
+              lastUpdatedAt: {
+                type: 'string',
+                format: 'date-time',
+                description: 'Latest change visible to the reporter (internal notes do not count).',
+              },
               isClosed: { type: 'boolean', example: false },
               updates: {
                 type: 'array',
@@ -218,6 +228,7 @@ const openApiSpec = {
                 id: { type: 'string' },
                 message: { type: 'string' },
                 status: { type: 'string', nullable: true },
+                visibility: { $ref: '#/components/schemas/Visibility' },
                 createdAt: { type: 'string', format: 'date-time' },
                 moderator: {
                   type: 'object',
@@ -292,6 +303,10 @@ const openApiSpec = {
             minLength: 5,
             maxLength: 500,
             example: 'Still in progress — we expect an outcome within two weeks.',
+          },
+          visibility: {
+            allOf: [{ $ref: '#/components/schemas/Visibility' }],
+            default: 'PUBLIC',
           },
         },
       },
@@ -637,7 +652,9 @@ const openApiSpec = {
     '/moderator/reports/{id}/updates': {
       post: {
         tags: ['Moderation'],
-        summary: 'Add a note for the reporter without changing status',
+        summary: 'Add a public update or an internal note without changing status',
+        description:
+          'PUBLIC (default) updates appear on the reporter tracking page. INTERNAL notes are visible to moderators only and do not move the reporter-facing lastUpdatedAt.',
         security: [{ bearerAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {

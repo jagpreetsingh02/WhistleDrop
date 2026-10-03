@@ -7,7 +7,7 @@ const { generateCaseCode, hashCaseCode } = require('../utils/caseCode');
 const { coarsenDate, coarseObjectId } = require('../utils/timeBuckets');
 const { scanForPii } = require('../utils/piiScanner');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
-const { STATUS, STATUSES } = require('../utils/constants');
+const { STATUS, STATUSES, VISIBILITY } = require('../utils/constants');
 
 const MAX_CASE_CODE_ATTEMPTS = 5;
 const PREVIEW_LENGTH = 140;
@@ -22,15 +22,32 @@ const OPEN_STATUSES = STATUSES.filter((status) => !isTerminal(status));
  * response by accident.
  * ------------------------------------------------------------------------- */
 
+const isPublic = (update) => update.visibility !== VISIBILITY.INTERNAL;
+
+/**
+ * Latest moment the reporter could have seen something change. Deliberately
+ * NOT the document's updatedAt: that also moves when an INTERNAL note is
+ * added, which would tell the reporter that moderators discussed the case
+ * privately.
+ */
+function latestPublicActivity(report, publicUpdates) {
+  return publicUpdates.reduce(
+    (latest, update) => (update.createdAt > latest ? update.createdAt : latest),
+    report.createdAt
+  );
+}
+
 /** What the anonymous reporter sees when tracking a case. */
 function toReporterView(report) {
+  const publicUpdates = report.updates.filter(isPublic);
+
   return {
     category: report.category,
     status: report.status,
     submittedAt: report.createdAt,
-    lastUpdatedAt: report.updatedAt,
+    lastUpdatedAt: latestPublicActivity(report, publicUpdates),
     isClosed: isTerminal(report.status),
-    updates: report.updates.map((update) => ({
+    updates: publicUpdates.map((update) => ({
       message: update.message,
       status: update.status,
       createdAt: update.createdAt,
@@ -54,6 +71,7 @@ function toModeratorView(report) {
       id: update._id.toString(),
       message: update.message,
       status: update.status,
+      visibility: update.visibility || VISIBILITY.PUBLIC,
       createdAt: update.createdAt,
       moderator: formatModerator(update.moderator),
     })),
@@ -247,6 +265,8 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
         updates: {
           message: message || `Status changed to ${nextStatus}`,
           status: nextStatus,
+          // A status change is something the reporter is entitled to see.
+          visibility: VISIBILITY.PUBLIC,
           moderator: moderatorId,
         },
       },
@@ -262,16 +282,17 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
 }
 
 /**
- * Adds a note for the reporter without changing the status.
+ * Adds a note without changing the status: PUBLIC for the reporter, or
+ * INTERNAL for moderators only.
  *
  * The "case is still open" check is part of the update filter rather than a
  * prior read, so a note can never land on a case that was closed a moment
  * earlier by another moderator.
  */
-async function addStatusUpdate({ reportId, moderatorId, message }) {
+async function addStatusUpdate({ reportId, moderatorId, message, visibility = VISIBILITY.PUBLIC }) {
   const updated = await Report.findOneAndUpdate(
     { _id: reportId, status: { $in: OPEN_STATUSES } },
-    { $push: { updates: { message, status: null, moderator: moderatorId } } },
+    { $push: { updates: { message, status: null, visibility, moderator: moderatorId } } },
     { new: true, runValidators: true }
   ).populate('updates.moderator', 'displayName');
 

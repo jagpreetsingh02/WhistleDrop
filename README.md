@@ -481,6 +481,11 @@ curl -X POST http://localhost:4000/api/v1/moderator/reports/6ab17466f6cabe35b17c
 Returns `201` with the full report. The update has `"status": null`, marking it
 as a note rather than a transition.
 
+Add `"visibility": "INTERNAL"` for a moderator-only note. Internal notes never
+appear on the tracking endpoint, and they do not move the reporter's
+`lastUpdatedAt` — otherwise the reporter could tell that moderators had been
+discussing their case privately.
+
 ### 10. Queue overview
 
 ```json
@@ -685,6 +690,7 @@ numbers, `@handles`, employee/student/badge IDs and phrases like *"my name is"*.
 | Description / evidence URL | ❌ | ✅ |
 | Internal report id | ❌ | ✅ |
 | Which moderator wrote an update | ❌ | ✅ |
+| `INTERNAL` moderator notes | ❌ | ✅ |
 | Any other report | ❌ | ✅ (that is their job) |
 
 The reporter's view omits the description on purpose: the tracking endpoint

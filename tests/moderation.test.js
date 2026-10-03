@@ -331,6 +331,101 @@ describe('POST /api/v1/moderator/reports/:id/updates', () => {
   });
 });
 
+describe('update visibility', () => {
+  const addNote = (id, body) =>
+    request(app)
+      .post(`/api/v1/moderator/reports/${id}/updates`)
+      .set('Authorization', authHeader)
+      .send(body);
+
+  it('defaults to PUBLIC', async () => {
+    const { id } = await seedReport();
+    const res = await addNote(id, { message: 'We are looking into this now.' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toBe('Update added');
+    expect(res.body.data.updates[0].visibility).toBe('PUBLIC');
+  });
+
+  it('accepts INTERNAL (case-insensitive) and shows it to moderators', async () => {
+    const { id } = await seedReport();
+    const res = await addNote(id, { message: 'Suspect this is the payroll team.', visibility: 'internal' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.message).toBe('Internal note added');
+    expect(res.body.data.updates[0]).toMatchObject({
+      message: 'Suspect this is the payroll team.',
+      visibility: 'INTERNAL',
+    });
+
+    const detail = await request(app)
+      .get(`/api/v1/moderator/reports/${id}`)
+      .set('Authorization', authHeader);
+    expect(detail.body.data.updates.map((u) => u.visibility)).toEqual(['INTERNAL']);
+  });
+
+  it('never sends an INTERNAL note to the reporter', async () => {
+    const { id, caseCode } = await seedReport();
+    await addNote(id, { message: 'Public: we have received your report.' });
+    await addNote(id, { message: 'INTERNAL-ONLY: cross-check with badge logs.', visibility: 'INTERNAL' });
+
+    const tracked = await request(app).get(`/api/v1/reports/${caseCode}`);
+
+    expect(tracked.body.data.updates).toEqual([
+      expect.objectContaining({ message: 'Public: we have received your report.' }),
+    ]);
+    const payload = JSON.stringify(tracked.body);
+    expect(payload).not.toContain('INTERNAL-ONLY');
+    expect(payload).not.toContain('badge logs');
+    expect(payload).not.toMatch(/visibility/i);
+  });
+
+  it('does not reveal internal activity through the reporter lastUpdatedAt', async () => {
+    const { id, caseCode } = await seedReport();
+    const before = await request(app).get(`/api/v1/reports/${caseCode}`);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await addNote(id, { message: 'Private discussion between moderators.', visibility: 'INTERNAL' });
+
+    const after = await request(app).get(`/api/v1/reports/${caseCode}`);
+    expect(after.body.data.lastUpdatedAt).toBe(before.body.data.lastUpdatedAt);
+  });
+
+  it('moves the reporter lastUpdatedAt for PUBLIC updates', async () => {
+    const { id, caseCode } = await seedReport();
+    const res = await addNote(id, { message: 'We have started the review.' });
+
+    const tracked = await request(app).get(`/api/v1/reports/${caseCode}`);
+    expect(tracked.body.data.lastUpdatedAt).toBe(res.body.data.updates[0].createdAt);
+  });
+
+  it('marks status-change updates as PUBLIC', async () => {
+    const { id } = await seedReport();
+    const res = await patchStatus(id, { status: 'UNDER_REVIEW' });
+    expect(res.body.data.updates[0].visibility).toBe('PUBLIC');
+  });
+
+  it('rejects an unknown visibility', async () => {
+    const { id } = await seedReport();
+    const res = await addNote(id, { message: 'Some note text here.', visibility: 'SECRET' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.details[0]).toEqual({
+      field: 'body.visibility',
+      message: 'visibility must be one of: PUBLIC, INTERNAL',
+    });
+  });
+
+  it('requires authentication for internal notes too', async () => {
+    const { id } = await seedReport();
+    const res = await request(app)
+      .post(`/api/v1/moderator/reports/${id}/updates`)
+      .send({ message: 'Unauthenticated note.', visibility: 'INTERNAL' });
+
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('end-to-end: reporter sees moderator progress', () => {
   it('surfaces status changes and notes on the tracking endpoint, without moderator identity', async () => {
     const { id, caseCode } = await seedReport();

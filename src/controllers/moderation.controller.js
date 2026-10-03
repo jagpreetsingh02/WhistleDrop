@@ -48,17 +48,19 @@ const updateStatus = asyncHandler(async (req, res) => {
   });
 });
 
-/** POST /api/v1/moderator/reports/:id/updates — note for the reporter. */
+/** POST /api/v1/moderator/reports/:id/updates — public or internal note. */
 const addUpdate = asyncHandler(async (req, res) => {
+  const { message, visibility } = req.validated.body;
   const report = await reportService.addStatusUpdate({
     reportId: req.validated.params.id,
     moderatorId: req.moderator._id,
-    message: req.validated.body.message,
+    message,
+    visibility,
   });
 
   res.status(201).json({
     success: true,
-    message: 'Update added',
+    message: visibility === 'INTERNAL' ? 'Internal note added' : 'Update added',
     data: reportService.toModeratorView(report),
   });
 });
