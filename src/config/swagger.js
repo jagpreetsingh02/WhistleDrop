@@ -1,6 +1,7 @@
 'use strict';
 
 const { CATEGORIES, STATUSES } = require('../utils/constants');
+const { PII_WARNING_CODES } = require('../utils/piiScanner');
 const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
 
 /**
@@ -97,6 +98,20 @@ const openApiSpec = {
         },
       },
 
+      PiiWarning: {
+        type: 'object',
+        description:
+          'A kind of possibly-identifying content found in reporter text. Never includes the matched text, and never blocks the request.',
+        properties: {
+          code: { type: 'string', enum: PII_WARNING_CODES, example: 'POSSIBLE_EMAIL' },
+          message: {
+            type: 'string',
+            example:
+              'The text appears to contain an email address. Moderators will see this text. If it could identify you, avoid repeating such details in follow-up messages.',
+          },
+        },
+      },
+
       SubmitReportResponse: {
         type: 'object',
         properties: {
@@ -114,6 +129,11 @@ const openApiSpec = {
                 description:
                   'Start of the TIMESTAMP_BUCKET_MINUTES window (default 15 min) the report arrived in — never the exact time.',
                 example: '2026-09-21T14:30:00.000Z',
+              },
+              warnings: {
+                type: 'array',
+                items: { $ref: '#/components/schemas/PiiWarning' },
+                description: 'Empty when nothing identifying was detected.',
               },
             },
           },

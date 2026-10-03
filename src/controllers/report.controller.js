@@ -12,7 +12,7 @@ const reportService = require('../services/report.service');
 const submitReport = asyncHandler(async (req, res) => {
   const { category, description, evidenceUrl } = req.validated.body;
 
-  const { report, caseCode } = await reportService.createReport({
+  const { report, caseCode, warnings } = await reportService.createReport({
     category,
     description,
     evidenceUrl,
@@ -27,6 +27,7 @@ const submitReport = asyncHandler(async (req, res) => {
       category: report.category,
       status: report.status,
       submittedAt: report.createdAt,
+      warnings,
     },
   });
 });

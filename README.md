@@ -636,6 +636,27 @@ relative order inside that window is unknowable — by design. Lists sort by
 `createdAt` then `_id`, so pagination stays stable. Moderator actions keep exact
 timestamps; they describe staff activity, not the reporter's.
 
+### PII warnings on free text
+
+Reporters often undo their own anonymity — signing off with an email address,
+or mentioning their staff number. On submission the description goes through
+[`piiScanner.js`](src/utils/piiScanner.js), which looks for emails, phone
+numbers, `@handles`, employee/student/badge IDs and phrases like *"my name is"*.
+
+```json
+"warnings": [
+  { "code": "POSSIBLE_EMAIL", "message": "The text appears to contain an email address. Moderators will see this text. …" }
+]
+```
+
+- **It never blocks a submission.** A false positive that rejects a real report
+  is far worse than a warning the reporter can ignore, so it deliberately leans
+  towards over-warning (a 10-digit invoice number is flagged as a phone number).
+- **It returns codes, never the matched text.** Nothing it finds is logged,
+  stored or echoed back.
+- It is a pure function with its own unit tests, including the false positives
+  it must *not* raise (dates, versions, IPs, CVE ids, amounts).
+
 ### What each audience can see
 
 | | Reporter (case code) | Moderator (JWT) |
@@ -668,6 +689,7 @@ hidden.
 | Threat | Outcome |
 | --- | --- |
 | Database dump is leaked | Reports readable, but no reporter identity exists in them and case codes cannot be recovered from hashes |
+| Reporter includes their own email/phone/ID in the text | Flagged back to them as a warning (codes only); the report is still accepted |
 | Timing correlation (matching submission time to someone's movements) | Only a 15-minute window is stored — in `createdAt` and inside the ObjectId |
 | Someone finds a reporter's case code | Sees status and updates only — not the report body |
 | Attacker guesses case codes | ~73 bits of entropy plus a lookup rate limit |

@@ -47,6 +47,45 @@ describe('POST /api/v1/reports — anonymous submission', () => {
     expect(new Set(codes).size).toBe(5);
   });
 
+  it('returns an empty warnings list for text with nothing identifying', async () => {
+    const res = await request(app).post('/api/v1/reports').send(VALID_REPORT);
+    expect(res.body.data.warnings).toEqual([]);
+  });
+
+  it('warns — but still accepts — a description that may identify the reporter', async () => {
+    const res = await request(app)
+      .post('/api/v1/reports')
+      .send({
+        ...VALID_REPORT,
+        description:
+          'My name is Arjun. The admin password is shared in chat; reach me at arjun.k@example.com or 9876543210.',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.caseCode).toBeDefined();
+    expect(res.body.data.warnings.map((w) => w.code)).toEqual([
+      'POSSIBLE_EMAIL',
+      'POSSIBLE_PHONE_NUMBER',
+      'POSSIBLE_SELF_IDENTIFICATION',
+    ]);
+    expect(res.body.data.warnings[0].message).toMatch(/email address/i);
+
+    // The warning describes the kind of finding without repeating it.
+    const serialisedWarnings = JSON.stringify(res.body.data.warnings);
+    expect(serialisedWarnings).not.toContain('arjun.k@example.com');
+    expect(serialisedWarnings).not.toContain('9876543210');
+    expect(serialisedWarnings).not.toContain('Arjun');
+  });
+
+  it('stores nothing extra about a PII warning', async () => {
+    await request(app)
+      .post('/api/v1/reports')
+      .send({ ...VALID_REPORT, description: `${VALID_REPORT.description} Contact me at a@b.co.` });
+
+    const stored = await Report.findOne().lean();
+    expect(Object.keys(stored)).not.toContain('warnings');
+  });
+
   it('normalises a lower-case category', async () => {
     const res = await request(app)
       .post('/api/v1/reports')

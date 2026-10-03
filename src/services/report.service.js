@@ -5,6 +5,7 @@ const Report = require('../models/Report');
 const AppError = require('../utils/AppError');
 const { generateCaseCode, hashCaseCode } = require('../utils/caseCode');
 const { coarsenDate, coarseObjectId } = require('../utils/timeBuckets');
+const { scanForPii } = require('../utils/piiScanner');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
 const { STATUS, STATUSES } = require('../utils/constants');
 
@@ -94,6 +95,10 @@ function formatModerator(moderator) {
  * The code is returned exactly once, here. We store only its hash, so if the
  * reporter loses the code there is genuinely no way — for us or for anyone
  * else — to recover it. That is the point.
+ *
+ * `warnings` lists kinds of possibly-identifying content found in the
+ * description (codes only, never the matched text). They never block the
+ * submission.
  */
 async function createReport({ category, description, evidenceUrl = null }) {
   // Stored and returned timestamps are the bucket start, never the real time.
@@ -112,7 +117,7 @@ async function createReport({ category, description, evidenceUrl = null }) {
         evidenceUrl,
         status: STATUS.SUBMITTED,
       });
-      return { report, caseCode };
+      return { report, caseCode, warnings: scanForPii(description) };
     } catch (error) {
       // Duplicate case code or id: astronomically unlikely, but retrying is
       // cheap and means a collision can never surface as a 500.
