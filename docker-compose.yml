@@ -1,0 +1,53 @@
+# Local / demo stack: the API plus MongoDB with a persistent named volume.
+#
+#   JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))") docker compose up -d --build
+#   docker compose exec api node scripts/createModerator.js --username root --password "…" --role admin
+#
+# Values are interpolated from the shell or from .env. MONGODB_URI is set
+# explicitly here so a localhost URI in .env is never used inside the network.
+
+services:
+  api:
+    build: .
+    image: whistledrop-api:latest
+    init: true
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - '${PORT:-4000}:4000'
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGODB_URI: mongodb://mongo:27017/whistledrop
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (at least 32 characters) in the environment or .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-2h}
+      BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      TIMESTAMP_BUCKET_MINUTES: ${TIMESTAMP_BUCKET_MINUTES:-15}
+      RETENTION_DAYS_AFTER_CLOSE: ${RETENTION_DAYS_AFTER_CLOSE:-365}
+      RATE_LIMIT_WINDOW_MINUTES: ${RATE_LIMIT_WINDOW_MINUTES:-15}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      REPORT_RATE_LIMIT_MAX: ${REPORT_RATE_LIMIT_MAX:-5}
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-10}
+      TRACK_RATE_LIMIT_MAX: ${TRACK_RATE_LIMIT_MAX:-20}
+      REPORTER_MESSAGE_RATE_LIMIT_MAX: ${REPORTER_MESSAGE_RATE_LIMIT_MAX:-10}
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    # No `ports:` on purpose — the database is reachable only from the api
+    # container on the private compose network, never from the host or internet.
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  mongo-data:

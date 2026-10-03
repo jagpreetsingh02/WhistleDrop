@@ -116,6 +116,26 @@ Then open **<http://localhost:4000/api-docs>** and try the API from the browser:
 submit a report, copy the `caseCode`, track it, log in, click **Authorize**,
 paste the token, and work the queue.
 
+### Run with Docker
+
+```bash
+export JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
+docker compose up -d --build --wait          # API + MongoDB, waits for health checks
+docker compose exec api node scripts/createModerator.js \
+  --username root --password "Adm1n-Long-Passphrase" --role admin
+open http://localhost:4000/api-docs
+docker compose down                           # add -v to delete the data volume
+```
+
+- **Multi-stage image** on `node:22-alpine`: production dependencies are
+  installed in a separate stage with `--ignore-scripts`, so the runtime image
+  has no dev tooling, npm cache or install-time scripts.
+- Runs as the unprivileged **`node`** user, with a `HEALTHCHECK` on `/health`
+  using Node's built-in `fetch` (no curl in the image).
+- MongoDB data lives in the named volume `mongo-data`. The database publishes
+  **no port** — it is reachable only from the API container.
+- `.dockerignore` keeps `.env`, tests and git history out of the build context.
+
 ---
 
 ## Architecture

@@ -1,0 +1,21 @@
+# Secrets must never be baked into an image.
+.env
+.env.*
+
+# Rebuilt inside the image from package-lock.json.
+node_modules
+
+# Not needed at runtime.
+.git
+.github
+tests
+coverage
+docs
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+eslint.config.js
+.prettierrc.json
+.prettierignore
+jest.config.js
