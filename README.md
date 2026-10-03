@@ -726,6 +726,7 @@ updates[] · messages[] · awaitingReporter · closedAt · createdAt · updatedA
 | Session or cookie | Nothing links two actions by the same person |
 | Uploaded files | Documents carry metadata (author, device, GPS); only an external link is accepted |
 | HTTP access logs | No `morgan`-style request logging — that is where identifying data quietly piles up |
+| Case codes in error logs | A `500` is logged with the route **pattern** (`GET /api/v1/reports/:caseCode`), never the URL, which would contain the reporter's code |
 
 This is enforced three times over: **Zod `strictObject`** rejects unknown fields
 with `400`, **Mongoose strict mode** would drop them anyway, and **explicit
@@ -872,7 +873,7 @@ tracking endpoint could be brute-forced and the submission endpoint flooded.
 ## Testing and quality
 
 ```bash
-npm test                  # 285 tests across 19 suites
+npm test                  # 287 tests across 19 suites
 npm run test:coverage     # with coverage
 npm run lint              # ESLint, zero warnings allowed
 npm run format:check      # Prettier
@@ -883,7 +884,7 @@ Integration tests run against a **real MongoDB** started in memory
 aggregation and TTL deletion behave as in production — without a database
 install or a shared test database.
 
-**Coverage:** 94.5% statements · 84.2% branches · 93.1% functions · 94.9% lines.
+**Coverage:** 94.5% statements · 84.6% branches · 93.1% functions · 94.9% lines.
 
 | Suite | What it proves |
 | --- | --- |
@@ -898,7 +899,7 @@ install or a shared test database.
 | `auth` | Login, enumeration resistance, tampered / forged / expired / wrong-audience tokens, deactivated and deleted accounts |
 | `rateLimit` / `trustProxy` | `429`s on every limited route, shared-bucket failure without `TRUST_PROXY`, per-client buckets with it |
 | `openapi` | The spec documents exactly the served routes, every `$ref` resolves, protected operations declare auth and `401`, success responses have schemas |
-| `errorHandler` | Every error-to-status mapping, generic `500`s, `413` |
+| `errorHandler` | Every error-to-status mapping, generic `500`s, `413`, and that error logs never contain a case code |
 | `seed` | Demo data shape, valid audit chain, idempotent accounts, production refusal |
 | Unit suites | `caseCode`, `statusWorkflow`, `timeBuckets`, `piiScanner` (including false positives) |
 

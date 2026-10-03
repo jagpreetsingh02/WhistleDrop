@@ -1,7 +1,10 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { app, request } = require('./setup/helpers');
+const { app, request, VALID_REPORT } = require('./setup/helpers');
+const db = require('./setup/testDb');
+const logger = require('../src/utils/logger');
+const reportService = require('../src/services/report.service');
 const errorHandler = require('../src/middleware/errorHandler');
 const AppError = require('../src/utils/AppError');
 
@@ -19,7 +22,7 @@ function run(error) {
       return this;
     },
   };
-  errorHandler(error, { method: 'GET', path: '/x' }, res, () => {});
+  errorHandler(error, { method: 'GET', baseUrl: '', route: { path: '/x' } }, res, () => {});
   return res;
 }
 
@@ -109,5 +112,45 @@ describe('error handling over HTTP', () => {
 
     expect(res.status).toBe(413);
     expect(res.body).toEqual({ success: false, error: { message: 'Request body is too large' } });
+  });
+});
+
+describe('error logging never contains a case code', () => {
+  beforeAll(db.connect);
+  afterAll(db.close);
+  afterEach(() => jest.restoreAllMocks());
+
+  it('logs the route pattern, not the URL, when a reporter route fails', async () => {
+    const submitted = await request(app).post('/api/v1/reports').send(VALID_REPORT);
+    const { caseCode } = submitted.body.data;
+
+    const logged = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    jest
+      .spyOn(reportService, 'getReportByCaseCode')
+      .mockRejectedValueOnce(new Error('db exploded'));
+
+    const res = await request(app).get(`/api/v1/reports/${caseCode}`);
+    const output = JSON.stringify(logged.mock.calls, (_key, value) =>
+      value instanceof Error ? value.message : value
+    );
+
+    expect(res.status).toBe(500);
+    expect(logged).toHaveBeenCalled();
+    expect(output).toContain('GET /api/v1/reports/:caseCode');
+    expect(output).not.toContain(caseCode);
+    expect(output).not.toContain(caseCode.replace(/-/g, ''));
+  });
+
+  it('does the same for the reporter reply route', async () => {
+    const submitted = await request(app).post('/api/v1/reports').send(VALID_REPORT);
+    const { caseCode } = submitted.body.data;
+
+    const logged = jest.spyOn(logger, 'error').mockImplementation(() => {});
+    jest.spyOn(reportService, 'addReporterMessage').mockRejectedValueOnce(new Error('db exploded'));
+
+    await request(app).post(`/api/v1/reports/${caseCode}/messages`).send({ body: 'Hello' });
+
+    expect(JSON.stringify(logged.mock.calls)).toContain('POST /api/v1/reports/:caseCode/messages');
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(caseCode);
   });
 });

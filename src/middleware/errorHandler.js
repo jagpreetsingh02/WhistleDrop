@@ -53,13 +53,23 @@ function normalize(error) {
   return null;
 }
 
+/**
+ * The route PATTERN for log lines, never the concrete URL: on reporter routes
+ * the URL contains the plaintext case code (/reports/WD-…), which is the
+ * reporter's credential and must never reach a log file.
+ */
+function routeLabel(req) {
+  const pattern = req.routePattern || (req.route && req.route.path);
+  return `${req.method} ${pattern || '(unmatched route)'}`;
+}
+
 // Express recognises an error handler by its four parameters, so `_next`
 // must stay even though it is unused.
 function errorHandler(error, req, res, _next) {
   const appError = normalize(error);
 
   if (!appError) {
-    logger.error(`Unhandled error on ${req.method} ${req.path}:`, error);
+    logger.error(`Unhandled error on ${routeLabel(req)}:`, error);
     return res.status(500).json({
       success: false,
       error: {
@@ -70,7 +80,7 @@ function errorHandler(error, req, res, _next) {
   }
 
   if (appError.statusCode >= 500) {
-    logger.error(`Server error on ${req.method} ${req.path}:`, appError.message);
+    logger.error(`Server error on ${routeLabel(req)}:`, appError.message);
   }
 
   return res.status(appError.statusCode).json({
