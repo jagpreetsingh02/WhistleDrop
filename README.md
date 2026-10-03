@@ -225,7 +225,7 @@ Base URL: `/api/v1`
 | `400 Bad Request` | Validation failed, malformed JSON, malformed id or case code |
 | `401 Unauthorized` | Missing, malformed, expired, forged token; bad credentials |
 | `404 Not Found` | Unknown case code, unknown report id, unknown route |
-| `409 Conflict` | Status is already the requested one; update on a closed case |
+| `409 Conflict` | Status is already the requested one; update on a closed case; another moderator changed the report concurrently |
 | `422 Unprocessable Entity` | Well-formed request that breaks the status workflow |
 | `429 Too Many Requests` | Rate limit exceeded |
 | `500 Internal Server Error` | Unexpected failure (generic message, details logged server-side) |
@@ -529,6 +529,12 @@ as a note rather than a transition.
   receive new updates. A reporter can trust that the outcome they were shown is
   final.
 - Re-applying the current status returns `409`, not a silent no-op.
+- Transitions are **atomic**. The write is a single `findOneAndUpdate` filtered
+  on the status that was validated, so if two moderators act at once
+  (`UNDER_REVIEW → RESOLVED` and `UNDER_REVIEW → DISMISSED`) exactly one wins and
+  the other gets `409` with `expectedStatus` / `currentStatus` in the details.
+  Notes use the same technique, so one can never land on a case closed a moment
+  earlier.
 - A rejected transition changes nothing: the status stays put and no update is
   written.
 - Every accepted transition appends an update recording the new status, the

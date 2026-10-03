@@ -566,10 +566,17 @@ const openApiSpec = {
           400: errorResponse('Validation failed'),
           401: errorResponse('Missing or invalid token'),
           404: errorResponse('Report not found'),
-          409: errorResponse('Report is already in that status', {
-            success: false,
-            error: { message: 'Report is already UNDER_REVIEW' },
-          }),
+          409: errorResponse(
+            'Report is already in that status, or another moderator changed it while this request was in flight',
+            {
+              success: false,
+              error: {
+                message:
+                  'Report status changed from UNDER_REVIEW to RESOLVED while this request was in flight. Reload and try again.',
+                details: { expectedStatus: 'UNDER_REVIEW', currentStatus: 'RESOLVED' },
+              },
+            }
+          ),
           422: errorResponse('Illegal status transition', {
             success: false,
             error: {
@@ -604,7 +611,7 @@ const openApiSpec = {
           404: errorResponse('Report not found'),
           409: errorResponse('Case is closed', {
             success: false,
-            error: { message: 'Report is closed (RESOLVED) and cannot receive new updates' },
+            error: { message: 'Report is closed (RESOLVED) and cannot be changed' },
           }),
         },
       },

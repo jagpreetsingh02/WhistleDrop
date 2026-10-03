@@ -4,10 +4,11 @@ const Report = require('../models/Report');
 const AppError = require('../utils/AppError');
 const { generateCaseCode, hashCaseCode } = require('../utils/caseCode');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
-const { STATUS } = require('../utils/constants');
+const { STATUS, STATUSES } = require('../utils/constants');
 
 const MAX_CASE_CODE_ATTEMPTS = 5;
 const PREVIEW_LENGTH = 140;
+const OPEN_STATUSES = STATUSES.filter((status) => !isTerminal(status));
 
 /* ---------------------------------------------------------------------------
  * Presenters
@@ -157,22 +158,17 @@ async function getReportById(id) {
 }
 
 /**
- * Moves a report to a new status, recording who did it and why.
- *
- * Every rejection path is explicit so the caller gets an actionable message:
- * a no-op transition is a 409, an illegal jump is a 422 listing what IS
- * allowed, and a closed case says so.
+ * Validates a requested transition against the workflow table. Every
+ * rejection path is explicit so the caller gets an actionable message: a no-op
+ * transition is a 409, an illegal jump is a 422 listing what IS allowed, and a
+ * closed case says so.
  */
-async function updateReportStatus({ reportId, moderatorId, nextStatus, message }) {
-  const report = await getReportById(reportId);
-  const currentStatus = report.status;
-
+function assertTransitionAllowed(currentStatus, nextStatus) {
   if (currentStatus === nextStatus) {
     throw AppError.conflict(`Report is already ${currentStatus}`);
   }
 
   if (!isValidTransition(currentStatus, nextStatus)) {
-    const allowed = getAllowedTransitions(currentStatus);
     const reason = isTerminal(currentStatus)
       ? `Report is closed (${currentStatus}) and cannot change status`
       : `Cannot change status from ${currentStatus} to ${nextStatus}`;
@@ -180,34 +176,92 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
     throw AppError.unprocessable(reason, {
       currentStatus,
       requestedStatus: nextStatus,
-      allowedTransitions: allowed,
+      allowedTransitions: getAllowedTransitions(currentStatus),
     });
   }
-
-  report.status = nextStatus;
-  report.updates.push({
-    message: message || `Status changed to ${nextStatus}`,
-    status: nextStatus,
-    moderator: moderatorId,
-  });
-
-  await report.save();
-  await report.populate('updates.moderator', 'displayName');
-  return report;
 }
 
-/** Adds a note for the reporter without changing the status. */
-async function addStatusUpdate({ reportId, moderatorId, message }) {
-  const report = await getReportById(reportId);
-
-  if (isTerminal(report.status)) {
-    throw AppError.conflict(`Report is closed (${report.status}) and cannot receive new updates`);
+/**
+ * Called when an atomic write matched nothing. Re-reads the report to tell the
+ * two possible causes apart: it no longer exists (404), or someone else
+ * changed it between our read and our write (409).
+ */
+async function rejectStaleWrite(reportId, expectedStatus) {
+  const latest = await Report.findById(reportId).select('status');
+  if (!latest) {
+    throw AppError.notFound('Report not found');
   }
 
-  report.updates.push({ message, status: null, moderator: moderatorId });
-  await report.save();
-  await report.populate('updates.moderator', 'displayName');
-  return report;
+  if (expectedStatus && latest.status !== expectedStatus) {
+    throw AppError.conflict(
+      `Report status changed from ${expectedStatus} to ${latest.status} while this request was in flight. Reload and try again.`,
+      { expectedStatus, currentStatus: latest.status }
+    );
+  }
+
+  throw AppError.conflict(`Report is closed (${latest.status}) and cannot be changed`, {
+    currentStatus: latest.status,
+  });
+}
+
+/**
+ * Moves a report to a new status, recording who did it and why.
+ *
+ * The write is a single findOneAndUpdate filtered on the status we validated
+ * against. A read-validate-save sequence would let two moderators both pass
+ * the check (UNDER_REVIEW → RESOLVED and UNDER_REVIEW → DISMISSED) and the
+ * second save would silently overwrite the first. Filtering on the expected
+ * status turns that race into a clean 409 for whoever lost it.
+ */
+async function updateReportStatus({ reportId, moderatorId, nextStatus, message }) {
+  const current = await Report.findById(reportId).select('status');
+  if (!current) {
+    throw AppError.notFound('Report not found');
+  }
+
+  assertTransitionAllowed(current.status, nextStatus);
+
+  const updated = await Report.findOneAndUpdate(
+    { _id: reportId, status: current.status },
+    {
+      $set: { status: nextStatus },
+      $push: {
+        updates: {
+          message: message || `Status changed to ${nextStatus}`,
+          status: nextStatus,
+          moderator: moderatorId,
+        },
+      },
+    },
+    { new: true, runValidators: true }
+  ).populate('updates.moderator', 'displayName');
+
+  if (!updated) {
+    return rejectStaleWrite(reportId, current.status);
+  }
+
+  return updated;
+}
+
+/**
+ * Adds a note for the reporter without changing the status.
+ *
+ * The "case is still open" check is part of the update filter rather than a
+ * prior read, so a note can never land on a case that was closed a moment
+ * earlier by another moderator.
+ */
+async function addStatusUpdate({ reportId, moderatorId, message }) {
+  const updated = await Report.findOneAndUpdate(
+    { _id: reportId, status: { $in: OPEN_STATUSES } },
+    { $push: { updates: { message, status: null, moderator: moderatorId } } },
+    { new: true, runValidators: true }
+  ).populate('updates.moderator', 'displayName');
+
+  if (!updated) {
+    return rejectStaleWrite(reportId);
+  }
+
+  return updated;
 }
 
 /** Small dashboard aggregate: how many reports sit in each status. */
