@@ -104,6 +104,18 @@ npm run create:moderator -- --username alice --password "Str0ngPassphrase!" --na
 > bypass limits. A forgotten setting shows up in the logs as
 > `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
 
+### Demo data (development only)
+
+```bash
+npm run seed
+```
+
+Creates `demo-admin` / `demo-moderator` accounts and five sample reports in
+different states (resolved, awaiting the reporter, under review with a reply,
+submitted, dismissed), all through the real services, and prints their case
+codes. It **refuses to run when `NODE_ENV=production`**, exiting before it
+connects to any database.
+
 ### 4. Run
 
 ```bash

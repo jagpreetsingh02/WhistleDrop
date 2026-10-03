@@ -13,7 +13,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "create:moderator": "node scripts/createModerator.js"
+    "create:moderator": "node scripts/createModerator.js",
+    "seed": "node scripts/seed.js"
   },
   "keywords": [
     "whistleblowing",
