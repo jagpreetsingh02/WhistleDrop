@@ -69,6 +69,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `JWT_SECRET` | — | **Required.** Min. 32 characters |
 | `JWT_EXPIRES_IN` | `2h` | Moderator session length |
 | `TRUST_PROXY` | `0` | Reverse-proxy hops in front of the API — **set to `1` behind a load balancer** |
+| `TIMESTAMP_BUCKET_MINUTES` | `15` | Reporter-originated timestamps are rounded down to this window (`0` = exact) |
 | `CORS_ORIGIN` | `*` | Comma-separated allowlist, or `*` |
 | `RATE_LIMIT_WINDOW_MINUTES` | `15` | Window for all limiters |
 | `RATE_LIMIT_MAX` | `100` | Requests per window, whole API |
@@ -615,6 +616,26 @@ WD-7JCF5-FRY4F-QNEEB
   data (not a human-chosen password), so there is nothing to brute-force, and
   lookups stay a single indexed query.
 
+### Timestamp coarsening
+
+An exact submission time is an identifier in disguise: *"the report arrived at
+14:32:07"* can be lined up against badge swipes, VPN logs or who stepped out of
+a meeting. So the submission time is **rounded down to a 15-minute bucket**
+(`TIMESTAMP_BUCKET_MINUTES`) *before it is written*. The precise time never
+reaches the database.
+
+That covers more than `createdAt`:
+
+- `updatedAt` starts at the same coarse value.
+- **The report `_id` too.** A MongoDB ObjectId embeds its creation time to the
+  second, so coarsening only `createdAt` would leave the real time readable from
+  the id. Report ids are built from the bucket time plus 8 random bytes instead.
+
+**Trade-off:** reports filed in the same window share a `createdAt` and their
+relative order inside that window is unknowable — by design. Lists sort by
+`createdAt` then `_id`, so pagination stays stable. Moderator actions keep exact
+timestamps; they describe staff activity, not the reporter's.
+
 ### What each audience can see
 
 | | Reporter (case code) | Moderator (JWT) |
@@ -647,6 +668,7 @@ hidden.
 | Threat | Outcome |
 | --- | --- |
 | Database dump is leaked | Reports readable, but no reporter identity exists in them and case codes cannot be recovered from hashes |
+| Timing correlation (matching submission time to someone's movements) | Only a 15-minute window is stored — in `createdAt` and inside the ObjectId |
 | Someone finds a reporter's case code | Sees status and updates only — not the report body |
 | Attacker guesses case codes | ~73 bits of entropy plus a lookup rate limit |
 | Malicious client posts `email` alongside a report | Rejected with `400`; nothing is stored |

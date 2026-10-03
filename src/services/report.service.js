@@ -1,8 +1,10 @@
 'use strict';
 
+const env = require('../config/env');
 const Report = require('../models/Report');
 const AppError = require('../utils/AppError');
 const { generateCaseCode, hashCaseCode } = require('../utils/caseCode');
+const { coarsenDate, coarseObjectId } = require('../utils/timeBuckets');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
 const { STATUS, STATUSES } = require('../utils/constants');
 
@@ -94,10 +96,16 @@ function formatModerator(moderator) {
  * else — to recover it. That is the point.
  */
 async function createReport({ category, description, evidenceUrl = null }) {
+  // Stored and returned timestamps are the bucket start, never the real time.
+  const submittedAt = coarsenDate(new Date(), env.privacy.timestampBucketMinutes);
+
   for (let attempt = 0; attempt < MAX_CASE_CODE_ATTEMPTS; attempt += 1) {
     const caseCode = generateCaseCode();
     try {
       const report = await Report.create({
+        _id: coarseObjectId(submittedAt),
+        createdAt: submittedAt,
+        updatedAt: submittedAt,
         caseCodeHash: hashCaseCode(caseCode),
         category,
         description,
@@ -106,8 +114,8 @@ async function createReport({ category, description, evidenceUrl = null }) {
       });
       return { report, caseCode };
     } catch (error) {
-      // Duplicate case code: astronomically unlikely, but retrying is cheap
-      // and means a collision can never surface as a 500.
+      // Duplicate case code or id: astronomically unlikely, but retrying is
+      // cheap and means a collision can never surface as a 500.
       if (error.code === 11000) continue;
       throw error;
     }
@@ -133,8 +141,10 @@ async function listReports({ status, category, page = 1, limit = 20, sort = 'new
   const skip = (page - 1) * limit;
   const sortOrder = sort === 'oldest' ? 1 : -1;
 
+  // Reports in the same time bucket share a createdAt; the (random) _id is a
+  // stable tie-breaker so pagination never repeats or skips a report.
   const [reports, total] = await Promise.all([
-    Report.find(filter).sort({ createdAt: sortOrder }).skip(skip).limit(limit),
+    Report.find(filter).sort({ createdAt: sortOrder, _id: sortOrder }).skip(skip).limit(limit),
     Report.countDocuments(filter),
   ]);
 

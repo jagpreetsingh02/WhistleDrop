@@ -135,6 +135,25 @@ describe('POST /api/v1/reports — anonymous submission', () => {
       expect(JSON.stringify(res.body.error.details)).toMatch(/Unrecognized key/i);
     });
 
+    it('stores only a coarsened submission time, in createdAt and inside the id', async () => {
+      const before = Date.now();
+      const res = await request(app).post('/api/v1/reports').send(VALID_REPORT);
+      const stored = await Report.findOne().lean();
+      const bucketMs = 15 * 60 * 1000;
+
+      // Exactly on a 15-minute boundary, and within the current window.
+      expect(stored.createdAt.getTime() % bucketMs).toBe(0);
+      expect(stored.createdAt.getTime()).toBeLessThanOrEqual(before);
+      expect(before - stored.createdAt.getTime()).toBeLessThan(bucketMs);
+
+      // updatedAt and the ObjectId's embedded time leak nothing more precise.
+      expect(stored.updatedAt.getTime()).toBe(stored.createdAt.getTime());
+      expect(stored._id.getTimestamp().getTime()).toBe(stored.createdAt.getTime());
+
+      // The reporter is shown the same coarse value.
+      expect(new Date(res.body.data.submittedAt).getTime()).toBe(stored.createdAt.getTime());
+    });
+
     it('stores no network identifiers even when the client sends them', async () => {
       await request(app)
         .post('/api/v1/reports')

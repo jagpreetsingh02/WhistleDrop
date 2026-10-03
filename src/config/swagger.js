@@ -108,7 +108,13 @@ const openApiSpec = {
               caseCode: { type: 'string', example: 'WD-4K9TM-XQ7YB-2NHVR' },
               category: { $ref: '#/components/schemas/Category' },
               status: { $ref: '#/components/schemas/Status' },
-              submittedAt: { type: 'string', format: 'date-time' },
+              submittedAt: {
+                type: 'string',
+                format: 'date-time',
+                description:
+                  'Start of the TIMESTAMP_BUCKET_MINUTES window (default 15 min) the report arrived in — never the exact time.',
+                example: '2026-09-21T14:30:00.000Z',
+              },
             },
           },
         },

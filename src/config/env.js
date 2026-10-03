@@ -50,6 +50,9 @@ const schema = z.object({
   CORS_ORIGIN: z.string().default('*'),
   TRUST_PROXY: z.string().default('0'),
 
+  // Reporter-originated timestamps are rounded down to this many minutes.
+  TIMESTAMP_BUCKET_MINUTES: z.coerce.number().int().min(0).max(1440).default(15),
+
   RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   REPORT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
@@ -81,6 +84,9 @@ const env = {
     expiresIn: raw.JWT_EXPIRES_IN,
   },
   trustProxy: parseTrustProxy(raw.TRUST_PROXY),
+  privacy: {
+    timestampBucketMinutes: raw.TIMESTAMP_BUCKET_MINUTES,
+  },
   corsOrigin: raw.CORS_ORIGIN === '*' ? '*' : raw.CORS_ORIGIN.split(',').map((o) => o.trim()),
   rateLimit: {
     windowMs: raw.RATE_LIMIT_WINDOW_MINUTES * 60 * 1000,
