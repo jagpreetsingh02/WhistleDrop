@@ -5,7 +5,8 @@ const bcrypt = require('bcryptjs');
 const env = require('../config/env');
 const Moderator = require('../models/Moderator');
 const AppError = require('../utils/AppError');
-const { JWT_ISSUER, JWT_AUDIENCE, ROLE } = require('../utils/constants');
+const auditService = require('./audit.service');
+const { JWT_ISSUER, JWT_AUDIENCE, ROLE, AUDIT_ACTION } = require('../utils/constants');
 
 /**
  * A pre-computed hash of a throwaway password. When a login arrives for a
@@ -46,6 +47,8 @@ async function login({ username, password }) {
   if (!moderator || !passwordMatches || !moderator.isActive) {
     throw AppError.unauthorized('Invalid username or password');
   }
+
+  await auditService.record({ moderatorId: moderator._id, action: AUDIT_ACTION.LOGIN });
 
   return {
     token: signToken(moderator),

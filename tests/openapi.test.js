@@ -27,6 +27,8 @@ const EXPECTED_OPERATIONS = [
   'GET /admin/moderators',
   'PATCH /admin/moderators/{id}/deactivate',
   'PATCH /admin/moderators/{id}/activate',
+  'GET /admin/audit-log',
+  'GET /admin/audit-log/verify',
 ];
 
 const PLACEHOLDERS = { caseCode: 'WD-AAAAA-BBBBB-CCCCC', id: '64b7f1a2c3d4e5f6a7b8c9d0' };

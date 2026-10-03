@@ -238,6 +238,9 @@ Base URL: `/api/v1`
 | `PATCH` | `/admin/moderators/:id/deactivate` | Deactivate an account (effective on its next request) |
 | `PATCH` | `/admin/moderators/:id/activate` | Reactivate an account |
 
+| `GET` | `/admin/audit-log` | Staff audit log, newest first — `?page=&limit=` |
+| `GET` | `/admin/audit-log/verify` | Recompute the audit hash chain and report the first break |
+
 Admins can also use every moderator route. Moderators get `403` on admin routes.
 
 ### Status codes used
@@ -712,6 +715,32 @@ numbers, `@handles`, employee/student/badge IDs and phrases like *"my name is"*.
 - It is a pure function with its own unit tests, including the false positives
   it must *not* raise (dates, versions, IPs, CVE ids, amounts).
 
+### Audit log: watching the watchers
+
+Moderators can read every report, so their access needs accountability too.
+Every `LOGIN`, `VIEW_REPORT`, `UPDATE_STATUS`, `ADD_UPDATE` and admin account
+action is appended to an `AuditLog` collection as
+`{ seq, moderator, action, report?, targetModerator?, createdAt, prevHash, hash }`.
+
+- **Tamper-evident hash chain.** `hash = SHA-256(prevHash + this entry's
+  fields)` and `seq` has no gaps. `GET /admin/audit-log/verify` recomputes the
+  chain and pinpoints the first edited, re-hashed, deleted or re-ordered entry.
+- **No reporter data, no IPs.** Entries hold ids and an action name — never
+  report text, case codes, IP addresses or user-agents. The audit log watches
+  staff; it must not become a second copy of the reports.
+- **Reads fail closed.** `VIEW_REPORT` is written *before* the report is
+  returned: if the view cannot be recorded, the moderator does not see the
+  report.
+- **Concurrent appends never fork the chain.** A unique index on `seq` lets one
+  writer win; the others re-read the new head and retry (`503` if the log stays
+  contended).
+- **Limits, stated honestly.** The chain proves the log was not *changed*; it
+  cannot by itself prove the newest entries were not *removed*. That is why
+  `verify` returns `headHash` — store it somewhere outside the database (a
+  ticket, a signed email) and compare later. Status changes and their audit
+  entry are two writes, not one transaction; a replica-set deployment could wrap
+  them in a transaction.
+
 ### What each audience can see
 
 | | Reporter (case code) | Moderator (JWT) |
@@ -750,7 +779,8 @@ hidden.
 | Someone finds a reporter's case code | Sees status and updates only — not the report body |
 | Attacker guesses case codes | ~73 bits of entropy plus a lookup rate limit |
 | Malicious client posts `email` alongside a report | Rejected with `400`; nothing is stored |
-| Moderator account is compromised | Attacker sees report contents — but still no reporter identity. Accounts can be deactivated and lose access on the very next request |
+| Moderator account is compromised | Attacker sees report contents — but still no reporter identity. Every report they open is in the audit log, and an admin can deactivate the account, which loses access on its very next request |
+| A moderator snoops on reports, or someone edits the audit trail to hide it | Every view is logged before the report is shown; the hash chain exposes edited, deleted or re-ordered entries |
 | Network-level observation (ISP, corporate proxy) | **Out of scope.** Reporters should use Tor or a network they do not control — no server-side design can fix this |
 
 ---
@@ -885,9 +915,6 @@ database.
   from that should use Tor.
 - **Rate limits are in-memory.** Correct for a single instance; a multi-instance
   deployment needs a shared store (Redis) so all instances see the same counts.
-- **No moderator audit log beyond status updates.** Reads are not recorded; a
-  regulated deployment would want a separate audit trail of who opened which
-  report.
 - **No notifications.** Reporters must poll their case code. That is the
   anonymity-preserving choice — any push channel is an identifier.
 

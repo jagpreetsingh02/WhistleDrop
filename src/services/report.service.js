@@ -7,7 +7,8 @@ const { generateCaseCode, hashCaseCode } = require('../utils/caseCode');
 const { coarsenDate, coarseObjectId } = require('../utils/timeBuckets');
 const { scanForPii } = require('../utils/piiScanner');
 const { getAllowedTransitions, isValidTransition, isTerminal } = require('../utils/statusWorkflow');
-const { STATUS, STATUSES, VISIBILITY } = require('../utils/constants');
+const auditService = require('./audit.service');
+const { STATUS, STATUSES, VISIBILITY, AUDIT_ACTION } = require('../utils/constants');
 
 const MAX_CASE_CODE_ATTEMPTS = 5;
 const PREVIEW_LENGTH = 140;
@@ -229,6 +230,21 @@ async function getReportById(id) {
 }
 
 /**
+ * Loads a report for a moderator and records that they opened it. The audit
+ * entry is written BEFORE the contents are returned: if the read cannot be
+ * recorded, it does not happen.
+ */
+async function viewReport({ reportId, moderatorId }) {
+  const report = await getReportById(reportId);
+  await auditService.record({
+    moderatorId,
+    action: AUDIT_ACTION.VIEW_REPORT,
+    reportId: report._id,
+  });
+  return report;
+}
+
+/**
  * Validates a requested transition against the workflow table. Every
  * rejection path is explicit so the caller gets an actionable message: a no-op
  * transition is a 409, an illegal jump is a 422 listing what IS allowed, and a
@@ -315,6 +331,11 @@ async function updateReportStatus({ reportId, moderatorId, nextStatus, message }
     return rejectStaleWrite(reportId, current.status);
   }
 
+  await auditService.record({
+    moderatorId,
+    action: AUDIT_ACTION.UPDATE_STATUS,
+    reportId: updated._id,
+  });
   return updated;
 }
 
@@ -337,6 +358,7 @@ async function addStatusUpdate({ reportId, moderatorId, message, visibility = VI
     return rejectStaleWrite(reportId);
   }
 
+  await auditService.record({ moderatorId, action: AUDIT_ACTION.ADD_UPDATE, reportId: updated._id });
   return updated;
 }
 
@@ -351,6 +373,7 @@ module.exports = {
   getReportByCaseCode,
   listReports,
   getReportById,
+  viewReport,
   updateReportStatus,
   addStatusUpdate,
   getStatusBreakdown,

@@ -1,6 +1,12 @@
 'use strict';
 
-const { CATEGORIES, STATUSES, VISIBILITIES, ROLES } = require('../utils/constants');
+const {
+  CATEGORIES,
+  STATUSES,
+  VISIBILITIES,
+  ROLES,
+  AUDIT_ACTIONS,
+} = require('../utils/constants');
 const { PII_WARNING_CODES } = require('../utils/piiScanner');
 const { ALLOWED_TRANSITIONS } = require('../utils/statusWorkflow');
 
@@ -290,6 +296,49 @@ const openApiSpec = {
           limit: { type: 'integer', example: 20 },
           total: { type: 'integer', example: 2 },
           totalPages: { type: 'integer', example: 1 },
+        },
+      },
+
+      AuditEntry: {
+        type: 'object',
+        description:
+          'One staff action. Contains ids and the action only — never report text, case codes or network identifiers.',
+        properties: {
+          seq: { type: 'integer', example: 42 },
+          action: { type: 'string', enum: [...AUDIT_ACTIONS], example: 'VIEW_REPORT' },
+          moderator: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              username: { type: 'string', example: 'alice' },
+              displayName: { type: 'string', example: 'Ethics Desk' },
+            },
+          },
+          reportId: { type: 'string', nullable: true, example: '6ab17466f6cabe35b17ce5cf' },
+          targetModeratorId: { type: 'string', nullable: true },
+          createdAt: { type: 'string', format: 'date-time' },
+          prevHash: { type: 'string', example: '3b1f…(64 hex chars)' },
+          hash: { type: 'string', example: '9c4e…(64 hex chars)' },
+        },
+      },
+
+      AuditVerifyResult: {
+        type: 'object',
+        properties: {
+          intact: { type: 'boolean' },
+          checkedEntries: { type: 'integer', description: 'Entries verified before the first break.' },
+          headSeq: { type: 'integer', description: 'Present when intact.' },
+          headHash: {
+            type: 'string',
+            description:
+              'Present when intact. Record it outside the database: comparing it later is the only way to detect the newest entries being deleted.',
+          },
+          brokenAtSeq: { type: 'integer', description: 'Present when not intact.' },
+          reason: {
+            type: 'string',
+            enum: ['MISSING_ENTRY', 'PREVIOUS_HASH_MISMATCH', 'CONTENT_HASH_MISMATCH'],
+            description: 'Present when not intact.',
+          },
         },
       },
 
@@ -911,6 +960,94 @@ const openApiSpec = {
           403: errorResponse('Caller is not an admin'),
           404: errorResponse('Account not found'),
           409: errorResponse('Account is already active'),
+        },
+      },
+    },
+
+    '/admin/audit-log': {
+      get: {
+        tags: ['Admin'],
+        summary: 'Read the staff audit log, newest first',
+        description:
+          'Records LOGIN, VIEW_REPORT, UPDATE_STATUS, ADD_UPDATE and ADMIN_* actions. Each entry is hash-chained to the previous one.',
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Paginated audit entries',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: { type: 'array', items: { $ref: '#/components/schemas/AuditEntry' } },
+                    meta: { $ref: '#/components/schemas/Pagination' },
+                  },
+                },
+              },
+            },
+          },
+          400: errorResponse('Invalid paging values'),
+          401: errorResponse('Missing, invalid or stale token'),
+          403: errorResponse('Caller is not an admin'),
+        },
+      },
+    },
+
+    '/admin/audit-log/verify': {
+      get: {
+        tags: ['Admin'],
+        summary: 'Verify the audit log hash chain',
+        description:
+          'Recomputes every hash in order. Detects edited, re-hashed, deleted and re-ordered entries.',
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: 'Verification result (200 whether or not the chain is intact)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    message: { type: 'string' },
+                    data: { $ref: '#/components/schemas/AuditVerifyResult' },
+                  },
+                },
+                examples: {
+                  intact: {
+                    value: {
+                      success: true,
+                      message: 'Audit log is intact',
+                      data: { intact: true, checkedEntries: 5, headSeq: 5, headHash: '9c4e…' },
+                    },
+                  },
+                  tampered: {
+                    value: {
+                      success: true,
+                      message: 'Audit log has been tampered with at entry #3',
+                      data: {
+                        intact: false,
+                        checkedEntries: 2,
+                        brokenAtSeq: 3,
+                        reason: 'CONTENT_HASH_MISMATCH',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: errorResponse('Missing, invalid or stale token'),
+          403: errorResponse('Caller is not an admin'),
         },
       },
     },

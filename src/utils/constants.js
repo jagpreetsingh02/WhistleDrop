@@ -40,6 +40,19 @@ const ROLE = Object.freeze({
 
 const ROLES = Object.freeze(Object.values(ROLE));
 
+/** Actions recorded in the tamper-evident audit log. */
+const AUDIT_ACTION = Object.freeze({
+  LOGIN: 'LOGIN',
+  VIEW_REPORT: 'VIEW_REPORT',
+  UPDATE_STATUS: 'UPDATE_STATUS',
+  ADD_UPDATE: 'ADD_UPDATE',
+  ADMIN_CREATE_ACCOUNT: 'ADMIN_CREATE_ACCOUNT',
+  ADMIN_DEACTIVATE_ACCOUNT: 'ADMIN_DEACTIVATE_ACCOUNT',
+  ADMIN_ACTIVATE_ACCOUNT: 'ADMIN_ACTIVATE_ACCOUNT',
+});
+
+const AUDIT_ACTIONS = Object.freeze(Object.values(AUDIT_ACTION));
+
 const CASE_CODE_PREFIX = 'WD';
 
 /** Claims pinned on every moderator JWT, checked again on verification. */
@@ -54,6 +67,8 @@ module.exports = {
   VISIBILITIES,
   ROLE,
   ROLES,
+  AUDIT_ACTION,
+  AUDIT_ACTIONS,
   CASE_CODE_PREFIX,
   JWT_ISSUER,
   JWT_AUDIENCE,

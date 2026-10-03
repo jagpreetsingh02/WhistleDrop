@@ -17,7 +17,10 @@ const listReports = asyncHandler(async (req, res) => {
 
 /** GET /api/v1/moderator/reports/:id */
 const getReport = asyncHandler(async (req, res) => {
-  const report = await reportService.getReportById(req.validated.params.id);
+  const report = await reportService.viewReport({
+    reportId: req.validated.params.id,
+    moderatorId: req.moderator._id,
+  });
 
   res.status(200).json({
     success: true,

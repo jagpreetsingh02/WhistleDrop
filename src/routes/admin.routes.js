@@ -9,11 +9,14 @@ const {
   listModerators,
   deactivateModerator,
   activateModerator,
+  listAuditLog,
+  verifyAuditLog,
 } = require('../controllers/admin.controller');
 const {
   createStaffSchema,
   listStaffQuerySchema,
   staffIdParamsSchema,
+  listAuditQuerySchema,
 } = require('../validators/admin.validator');
 const { ROLE } = require('../utils/constants');
 
@@ -36,5 +39,8 @@ router.patch(
   validate({ params: staffIdParamsSchema }),
   activateModerator
 );
+
+router.get('/audit-log', validate({ query: listAuditQuerySchema }), listAuditLog);
+router.get('/audit-log/verify', verifyAuditLog);
 
 module.exports = router;

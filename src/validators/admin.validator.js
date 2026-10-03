@@ -34,4 +34,14 @@ const staffIdParamsSchema = z.object({
   id: z.string().trim().regex(/^[a-f\d]{24}$/i, 'id must be a valid moderator id'),
 });
 
-module.exports = { createStaffSchema, listStaffQuerySchema, staffIdParamsSchema };
+const listAuditQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+module.exports = {
+  createStaffSchema,
+  listStaffQuerySchema,
+  staffIdParamsSchema,
+  listAuditQuerySchema,
+};

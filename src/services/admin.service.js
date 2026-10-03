@@ -3,6 +3,8 @@
 const Moderator = require('../models/Moderator');
 const AppError = require('../utils/AppError');
 const authService = require('./auth.service');
+const auditService = require('./audit.service');
+const { AUDIT_ACTION } = require('../utils/constants');
 
 /** Admin-facing shape of a staff account. */
 function toStaffView(account) {
@@ -13,8 +15,14 @@ function toStaffView(account) {
   };
 }
 
-function createStaffAccount({ username, password, displayName, role }) {
-  return authService.createModerator({ username, password, displayName, role });
+async function createStaffAccount({ actorId, username, password, displayName, role }) {
+  const account = await authService.createModerator({ username, password, displayName, role });
+  await auditService.record({
+    moderatorId: actorId,
+    action: AUDIT_ACTION.ADMIN_CREATE_ACCOUNT,
+    targetModeratorId: account._id,
+  });
+  return account;
 }
 
 async function listStaffAccounts({ page = 1, limit = 20 } = {}) {
@@ -54,7 +62,14 @@ async function setAccountActive({ actorId, targetId, isActive }) {
     { new: true }
   );
 
-  if (updated) return updated;
+  if (updated) {
+    await auditService.record({
+      moderatorId: actorId,
+      action: isActive ? AUDIT_ACTION.ADMIN_ACTIVATE_ACCOUNT : AUDIT_ACTION.ADMIN_DEACTIVATE_ACCOUNT,
+      targetModeratorId: updated._id,
+    });
+    return updated;
+  }
 
   const exists = await Moderator.exists({ _id: targetId });
   if (!exists) {
