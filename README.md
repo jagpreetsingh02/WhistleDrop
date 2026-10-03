@@ -669,6 +669,7 @@ hidden.
 | Input validation | Zod on body, query and params; unknown keys rejected |
 | Injection | Validated-and-typed input into Mongoose; no string-built queries, no `$where` |
 | XSS via stored links | `evidenceUrl` is restricted to `http(s)`, blocking `javascript:` and `data:` payloads |
+| Caching | `Cache-Control: no-store` + `Pragma: no-cache` on every reporter, auth and moderator response — including errors — so no browser, proxy or CDN keeps a case code, a case status or a token |
 | Payload size | JSON bodies capped at 100 KB |
 | Rate limiting | Four separate limiters: global, submission, login, case lookup |
 | Error leakage | Unexpected errors are logged server-side and returned as a generic `500` — never a stack trace or driver message |

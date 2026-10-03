@@ -2,6 +2,7 @@
 
 const express = require('express');
 const validate = require('../middleware/validate');
+const noStore = require('../middleware/noStore');
 const { requireModerator } = require('../middleware/auth');
 const {
   listReports,
@@ -19,10 +20,11 @@ const {
 
 const router = express.Router();
 
-// One guard for the whole router: every route below requires a valid JWT.
-// Applying it here rather than per-route means a new endpoint cannot be added
-// unprotected by mistake.
-router.use(requireModerator);
+// One guard for the whole router: every route below requires a valid JWT and
+// returns full report contents, so nothing here may be cached. Applying both
+// here rather than per-route means a new endpoint cannot be added unprotected
+// by mistake.
+router.use(noStore, requireModerator);
 
 router.get('/stats', getStats);
 router.get('/reports', validate({ query: listReportsQuerySchema }), listReports);

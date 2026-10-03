@@ -139,6 +139,15 @@ describe('GET /api/v1/moderator/reports/:id', () => {
     expect(JSON.stringify(res.body)).not.toMatch(/caseCodeHash/i);
   });
 
+  it('forbids caching of report contents', async () => {
+    const { id } = await seedReport();
+    const res = await request(app)
+      .get(`/api/v1/moderator/reports/${id}`)
+      .set('Authorization', authHeader);
+
+    expect(res.headers['cache-control']).toBe('no-store');
+  });
+
   it('returns 404 for an unknown id', async () => {
     const res = await request(app)
       .get('/api/v1/moderator/reports/64b7f1a2c3d4e5f6a7b8c9d0')

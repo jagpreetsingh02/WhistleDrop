@@ -53,6 +53,13 @@ const openApiSpec = {
     { name: 'Moderation', description: 'Protected moderator operations' },
   ],
   components: {
+    headers: {
+      CacheControlNoStore: {
+        description:
+          'Always `no-store`: case codes and case status must never be kept by a browser, proxy or CDN.',
+        schema: { type: 'string', example: 'no-store' },
+      },
+    },
     securitySchemes: {
       bearerAuth: {
         type: 'http',
@@ -345,6 +352,7 @@ const openApiSpec = {
         responses: {
           201: {
             description: 'Report stored, case code issued',
+            headers: { 'Cache-Control': { $ref: '#/components/headers/CacheControlNoStore' } },
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/SubmitReportResponse' },
@@ -388,6 +396,7 @@ const openApiSpec = {
         responses: {
           200: {
             description: 'Current status of the case',
+            headers: { 'Cache-Control': { $ref: '#/components/headers/CacheControlNoStore' } },
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/TrackReportResponse' },

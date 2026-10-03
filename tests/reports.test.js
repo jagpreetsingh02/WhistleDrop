@@ -240,6 +240,38 @@ describe('GET /api/v1/reports/:caseCode — anonymous tracking', () => {
   });
 });
 
+describe('caching', () => {
+  const expectNoStore = (res) => {
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers.pragma).toBe('no-cache');
+  };
+
+  it('forbids caching of the tracking response', async () => {
+    const submitted = await request(app).post('/api/v1/reports').send(VALID_REPORT);
+    const res = await request(app).get(`/api/v1/reports/${submitted.body.data.caseCode}`);
+
+    expect(res.status).toBe(200);
+    expectNoStore(res);
+  });
+
+  it('forbids caching of the submission response, which carries the case code', async () => {
+    const res = await request(app).post('/api/v1/reports').send(VALID_REPORT);
+
+    expect(res.status).toBe(201);
+    expectNoStore(res);
+  });
+
+  it('forbids caching of tracking errors too', async () => {
+    const notFound = await request(app).get('/api/v1/reports/WD-AAAAA-BBBBB-CCCCC');
+    const malformed = await request(app).get('/api/v1/reports/abc');
+
+    expect(notFound.status).toBe(404);
+    expect(malformed.status).toBe(400);
+    expectNoStore(notFound);
+    expectNoStore(malformed);
+  });
+});
+
 describe('service metadata', () => {
   it('publishes categories, statuses and the workflow', async () => {
     const res = await request(app).get('/api/v1/meta');

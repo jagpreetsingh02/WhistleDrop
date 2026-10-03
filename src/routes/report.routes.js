@@ -2,6 +2,7 @@
 
 const express = require('express');
 const validate = require('../middleware/validate');
+const noStore = require('../middleware/noStore');
 const { submitReportLimiter, trackLimiter } = require('../middleware/rateLimiter');
 const { submitReport, trackReport } = require('../controllers/report.controller');
 const {
@@ -11,6 +12,9 @@ const {
 
 /** Public, unauthenticated routes used by reporters. */
 const router = express.Router();
+
+// Applied before the limiter and validation so 4xx responses are covered too.
+router.use(noStore);
 
 router.post(
   '/',
