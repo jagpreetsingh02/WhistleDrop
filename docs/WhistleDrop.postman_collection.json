@@ -1,0 +1,1053 @@
+{
+  "info": {
+    "name": "WhistleDrop API",
+    "description": "End-to-end journeys for the WhistleDrop anonymous reporting API.\n\nRun the folders in order (Collection Runner or `newman run`). Requests chain\nthrough collection variables: the case code from submission feeds tracking,\nthe login tokens feed the moderator and admin folders, and so on.\n\nPrerequisites: the API running at `baseUrl`, and the demo accounts from\n`npm run seed` (or set adminUsername/adminPassword/moderatorUsername/\nmoderatorPassword to your own accounts).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{moderatorToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api/v1"
+    },
+    {
+      "key": "moderatorUsername",
+      "value": "demo-moderator"
+    },
+    {
+      "key": "moderatorPassword",
+      "value": "Demo-Moderator-Passphrase-2026"
+    },
+    {
+      "key": "adminUsername",
+      "value": "demo-admin"
+    },
+    {
+      "key": "adminPassword",
+      "value": "Demo-Admin-Passphrase-2026"
+    },
+    {
+      "key": "nonce",
+      "value": ""
+    },
+    {
+      "key": "caseCode",
+      "value": ""
+    },
+    {
+      "key": "reportId",
+      "value": ""
+    },
+    {
+      "key": "moderatorToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "newAccountId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Reporter — submit and track",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Submit a report",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.collectionVariables.set('nonce', 'pm' + Date.now());"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "  const data = pm.response.json().data;",
+                  "  pm.test('returns a case code', () => pm.expect(data.caseCode).to.match(/^WD-[A-Z2-9]{5}-[A-Z2-9]{5}-[A-Z2-9]{5}$/));",
+                  "  pm.test('response is never cached', () => pm.expect(pm.response.headers.get('Cache-Control')).to.eql('no-store'));",
+                  "  pm.collectionVariables.set('caseCode', data.caseCode);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"SECURITY\",\n  \"description\": \"Postman run {{nonce}}: production database credentials are committed to a public repository.\",\n  \"evidenceUrl\": \"https://example.com/evidence/{{nonce}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Submit — PII warning example",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "  const codes = pm.response.json().data.warnings.map((w) => w.code);",
+                  "  pm.test('warns about the email and self-identification', () => pm.expect(codes).to.include.members(['POSSIBLE_EMAIL', 'POSSIBLE_SELF_IDENTIFICATION']));",
+                  "  pm.test('never echoes the email back', () => pm.expect(JSON.stringify(pm.response.json().data.warnings)).to.not.include('sam@example.com'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"OTHER\",\n  \"description\": \"My name is Sam and you can reach me at sam@example.com about the {{nonce}} issue.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Submit — validation error (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "  pm.test('lists field errors', () => pm.expect(pm.response.json().error.details.length).to.be.above(1));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"Gossip\",\n  \"description\": \"too short\",\n  \"email\": \"me@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Track the case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  const data = pm.response.json().data;",
+                  "  pm.test('status is SUBMITTED', () => pm.expect(data.status).to.eql('SUBMITTED'));",
+                  "  pm.test('no description or internal id is exposed', () => { pm.expect(data).to.not.have.property('description'); pm.expect(data).to.not.have.property('id'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{caseCode}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "{{caseCode}}"]
+            }
+          }
+        },
+        {
+          "name": "Track — unknown code (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 404', () => pm.response.to.have.status(404));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/WD-ZZZZZ-ZZZZZ-ZZZZZ",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "WD-ZZZZZ-ZZZZZ-ZZZZZ"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Moderator — review and ask a question",
+      "item": [
+        {
+          "name": "Log in as moderator",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.collectionVariables.set('moderatorToken', pm.response.json().data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{moderatorUsername}}\",\n  \"password\": \"{{moderatorPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Search for the new report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  const reports = pm.response.json().data;",
+                  "  pm.test('finds exactly the submitted report', () => pm.expect(reports).to.have.lengthOf(1));",
+                  "  pm.collectionVariables.set('reportId', reports[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports?q={{nonce}}&category=SECURITY&hasEvidence=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports"],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{nonce}}"
+                },
+                {
+                  "key": "category",
+                  "value": "SECURITY"
+                },
+                {
+                  "key": "hasEvidence",
+                  "value": "true"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Open the report",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('shows the full description', () => pm.expect(pm.response.json().data.description).to.include(pm.collectionVariables.get('nonce')));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports/{{reportId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports", "{{reportId}}"]
+            }
+          }
+        },
+        {
+          "name": "Change status — illegal jump (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 422', () => pm.response.to.have.status(422));",
+                  "  pm.test('lists the allowed transitions', () => pm.expect(pm.response.json().error.details.allowedTransitions).to.eql(['UNDER_REVIEW', 'DISMISSED']));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports/{{reportId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports", "{{reportId}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Change status — UNDER_REVIEW",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports/{{reportId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports", "{{reportId}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"UNDER_REVIEW\",\n  \"message\": \"We have opened an investigation.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Add an internal note",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports/{{reportId}}/updates",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports", "{{reportId}}", "updates"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Repo owner identified; do not share with the reporter.\",\n  \"visibility\": \"INTERNAL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Ask the reporter a question",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "  pm.test('case is now awaiting the reporter', () => pm.expect(pm.response.json().data.awaitingReporter).to.eql(true));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports/{{reportId}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports", "{{reportId}}", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Which repository are the credentials in?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Queue — awaiting reporter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('the case is in the queue', () => pm.expect(pm.response.json().data.map((r) => r.id)).to.include(pm.collectionVariables.get('reportId')));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports?awaitingReporter=true&q={{nonce}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports"],
+              "query": [
+                {
+                  "key": "awaitingReporter",
+                  "value": "true"
+                },
+                {
+                  "key": "q",
+                  "value": "{{nonce}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Reporter — answer anonymously",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Track — sees the question, not the internal note",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  const data = pm.response.json().data;",
+                  "  pm.test('a reply is expected', () => pm.expect(data.awaitingYourReply).to.eql(true));",
+                  "  pm.test('internal note is hidden', () => pm.expect(JSON.stringify(data)).to.not.include('Repo owner identified'));",
+                  "  pm.test('moderator identity is hidden', () => pm.expect(JSON.stringify(data)).to.not.include('displayName'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{caseCode}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "{{caseCode}}"]
+            }
+          }
+        },
+        {
+          "name": "Reply with the case code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "  pm.test('no longer awaiting a reply', () => pm.expect(pm.response.json().data.awaitingYourReply).to.eql(false));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{caseCode}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "{{caseCode}}", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"It is the infra-scripts repo, in the deploy folder.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Moderator — resolve",
+      "item": [
+        {
+          "name": "Resolve the case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('closedAt is set', () => pm.expect(pm.response.json().data.closedAt).to.be.a('string'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/reports/{{reportId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "reports", "{{reportId}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"RESOLVED\",\n  \"message\": \"The exposed credentials were rotated.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reporter reply after closing (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 409', () => pm.response.to.have.status(409));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{caseCode}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "{{caseCode}}", "messages"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"One more thing...\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Track — final outcome",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('case is closed as RESOLVED', () => { const d = pm.response.json().data; pm.expect(d.status).to.eql('RESOLVED'); pm.expect(d.isClosed).to.eql(true); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{caseCode}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "{{caseCode}}"]
+            }
+          }
+        },
+        {
+          "name": "Queue overview",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/moderator/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["moderator", "stats"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Admin — accounts and audit log",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{adminToken}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Log in as admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.collectionVariables.set('adminToken', pm.response.json().data.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Moderator calling an admin route (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 403', () => pm.response.to.have.status(403));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{moderatorToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderators",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "moderators"]
+            }
+          }
+        },
+        {
+          "name": "Create a moderator account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "  pm.collectionVariables.set('newAccountId', pm.response.json().data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderators",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "moderators"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"postman-{{nonce}}\",\n  \"password\": \"Postman-Long-Passphrase-1\",\n  \"displayName\": \"Postman Desk\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List staff accounts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderators",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "moderators"]
+            }
+          }
+        },
+        {
+          "name": "Deactivate the account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('account is inactive', () => pm.expect(pm.response.json().data.isActive).to.eql(false));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderators/{{newAccountId}}/deactivate",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "moderators", "{{newAccountId}}", "deactivate"]
+            }
+          }
+        },
+        {
+          "name": "Reactivate the account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/moderators/{{newAccountId}}/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "moderators", "{{newAccountId}}", "activate"]
+            }
+          }
+        },
+        {
+          "name": "Read the audit log",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('records the moderator\\'s actions', () => pm.expect(pm.response.json().data.map((e) => e.action)).to.include.members(['VIEW_REPORT', 'UPDATE_STATUS', 'SEND_MESSAGE']));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/audit-log?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "audit-log"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Verify the audit hash chain",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "{",
+                  "  pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "  pm.test('chain is intact', () => pm.expect(pm.response.json().data.intact).to.eql(true));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/audit-log/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "audit-log", "verify"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
