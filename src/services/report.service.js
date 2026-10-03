@@ -95,6 +95,18 @@ function toModeratorSummary(report) {
   };
 }
 
+/** Echoes the applied filters back in list metadata (null = not applied). */
+function describeFilters({ status, category, q, from, toExclusive, hasEvidence }) {
+  return {
+    status: status || null,
+    category: category || null,
+    q: q || null,
+    from: from || null,
+    toExclusive: toExclusive || null,
+    hasEvidence: typeof hasEvidence === 'boolean' ? hasEvidence : null,
+  };
+}
+
 function formatModerator(moderator) {
   if (!moderator) return null;
   // Populated document vs. raw ObjectId.
@@ -157,18 +169,43 @@ async function getReportByCaseCode(caseCode) {
   return report;
 }
 
-async function listReports({ status, category, page = 1, limit = 20, sort = 'newest' } = {}) {
+// Reports in the same time bucket share a createdAt; the (random) _id is a
+// stable tie-breaker so pagination never repeats or skips a report.
+const SORTS = Object.freeze({
+  newest: { createdAt: -1, _id: -1 },
+  oldest: { createdAt: 1, _id: 1 },
+  recentlyUpdated: { updatedAt: -1, _id: -1 },
+});
+
+/**
+ * Turns validated filters into a MongoDB query. Every value arrives typed and
+ * bounded from Zod, and free text goes to the `$text` index — never into a
+ * RegExp — so there is nothing to escape and no ReDoS surface.
+ */
+function buildReportFilter({ status, category, q, from, toExclusive, hasEvidence }) {
   const filter = {};
   if (status) filter.status = status;
   if (category) filter.category = category;
+  if (q) filter.$text = { $search: q };
 
+  if (from || toExclusive) {
+    filter.createdAt = {};
+    if (from) filter.createdAt.$gte = from;
+    if (toExclusive) filter.createdAt.$lt = toExclusive;
+  }
+
+  if (hasEvidence === true) filter.evidenceUrl = { $ne: null };
+  if (hasEvidence === false) filter.evidenceUrl = null;
+
+  return filter;
+}
+
+async function listReports({ page = 1, limit = 20, sort = 'newest', ...filters } = {}) {
+  const filter = buildReportFilter(filters);
   const skip = (page - 1) * limit;
-  const sortOrder = sort === 'oldest' ? 1 : -1;
 
-  // Reports in the same time bucket share a createdAt; the (random) _id is a
-  // stable tie-breaker so pagination never repeats or skips a report.
   const [reports, total] = await Promise.all([
-    Report.find(filter).sort({ createdAt: sortOrder, _id: sortOrder }).skip(skip).limit(limit),
+    Report.find(filter).sort(SORTS[sort]).skip(skip).limit(limit),
     Report.countDocuments(filter),
   ]);
 
@@ -320,4 +357,5 @@ module.exports = {
   toReporterView,
   toModeratorView,
   toModeratorSummary,
+  describeFilters,
 };

@@ -563,11 +563,39 @@ const openApiSpec = {
     '/moderator/reports': {
       get: {
         tags: ['Moderation'],
-        summary: 'List reports, optionally filtered',
+        summary: 'List, search and filter reports',
+        description:
+          'All filters combine with AND. `q` uses a MongoDB text index over descriptions: words are stemmed and OR-ed, `"exact phrase"` and `-excluded` are supported. Dates filter on the (coarsened) submission time.',
         security: [{ bearerAuth: [] }],
         parameters: [
           { name: 'status', in: 'query', schema: { $ref: '#/components/schemas/Status' } },
           { name: 'category', in: 'query', schema: { $ref: '#/components/schemas/Category' } },
+          {
+            name: 'q',
+            in: 'query',
+            description: 'Full-text search over descriptions.',
+            schema: { type: 'string', minLength: 2, maxLength: 100 },
+            example: 'credentials',
+          },
+          {
+            name: 'from',
+            in: 'query',
+            description: 'Inclusive lower bound — ISO 8601 date or date-time.',
+            schema: { type: 'string', example: '2026-09-01' },
+          },
+          {
+            name: 'to',
+            in: 'query',
+            description:
+              'Upper bound — ISO 8601 date or date-time. A plain date includes that whole day. Must not be earlier than `from`.',
+            schema: { type: 'string', example: '2026-09-30' },
+          },
+          {
+            name: 'hasEvidence',
+            in: 'query',
+            description: 'Only reports with (true) or without (false) an evidence link.',
+            schema: { type: 'string', enum: ['true', 'false'] },
+          },
           { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
           {
             name: 'limit',
@@ -577,7 +605,11 @@ const openApiSpec = {
           {
             name: 'sort',
             in: 'query',
-            schema: { type: 'string', enum: ['newest', 'oldest'], default: 'newest' },
+            schema: {
+              type: 'string',
+              enum: ['newest', 'oldest', 'recentlyUpdated'],
+              default: 'newest',
+            },
           },
         ],
         responses: {
@@ -594,20 +626,40 @@ const openApiSpec = {
                       items: { $ref: '#/components/schemas/ReportSummary' },
                     },
                     meta: {
-                      type: 'object',
-                      properties: {
-                        page: { type: 'integer' },
-                        limit: { type: 'integer' },
-                        total: { type: 'integer' },
-                        totalPages: { type: 'integer' },
-                      },
+                      allOf: [
+                        { $ref: '#/components/schemas/Pagination' },
+                        {
+                          type: 'object',
+                          properties: {
+                            sort: { type: 'string', example: 'newest' },
+                            filters: {
+                              type: 'object',
+                              description: 'Applied filters, normalised (null = not applied).',
+                              example: {
+                                status: null,
+                                category: 'SECURITY',
+                                q: 'credentials',
+                                from: '2026-09-01T00:00:00.000Z',
+                                toExclusive: '2026-10-01T00:00:00.000Z',
+                                hasEvidence: true,
+                              },
+                            },
+                          },
+                        },
+                      ],
                     },
                   },
                 },
               },
             },
           },
-          400: errorResponse('Invalid filter value'),
+          400: errorResponse('Invalid filter value', {
+            success: false,
+            error: {
+              message: 'Validation failed',
+              details: [{ field: 'query.to', message: 'to must not be earlier than from' }],
+            },
+          }),
           401: errorResponse('Missing or invalid token'),
         },
       },

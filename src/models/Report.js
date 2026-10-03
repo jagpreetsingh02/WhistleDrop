@@ -107,6 +107,12 @@ const reportSchema = new mongoose.Schema(
 
 // Common moderator query: "open SECURITY cases, newest first".
 reportSchema.index({ status: 1, category: 1, createdAt: -1 });
+reportSchema.index({ updatedAt: -1 });
+
+// Full-text search over descriptions for the moderator `q` filter. A text
+// index (rather than a RegExp built from user input) gives stemming —
+// "credential" matches "credentials" — and cannot be turned into a ReDoS.
+reportSchema.index({ description: 'text' }, { name: 'description_text' });
 
 /**
  * Retention: MongoDB deletes a report automatically once it has been closed

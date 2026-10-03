@@ -55,13 +55,66 @@ const trackReportParamsSchema = z.object({
     .max(64, 'caseCode is not a valid case code'),
 });
 
-const listReportsQuerySchema = z.object({
-  status: statusField.optional(),
-  category: categoryField.optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-  sort: z.enum(['newest', 'oldest']).default('newest'),
-});
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE_OR_DATETIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const isoDateField = (name) =>
+  z
+    .string()
+    .trim()
+    .refine(
+      (value) => ISO_DATE_OR_DATETIME.test(value) && !Number.isNaN(Date.parse(value)),
+      `${name} must be an ISO 8601 date or date-time, e.g. 2026-09-21`
+    );
+
+/** "true" / "false" query strings. z.coerce.boolean() would turn "false" into true. */
+const booleanQueryField = (name) =>
+  z
+    .enum(['true', 'false'], { message: `${name} must be true or false` })
+    .transform((value) => value === 'true');
+
+/**
+ * Moderator list filters.
+ *
+ * Date range semantics: `from` is inclusive; `to` is inclusive of the whole
+ * day when given as a plain date (`to=2026-09-21` includes reports from that
+ * day), which is what a person filling in a date picker expects. Both are
+ * normalised into a half-open range [from, toExclusive) for the query.
+ */
+const listReportsQuerySchema = z
+  .object({
+    status: statusField.optional(),
+    category: categoryField.optional(),
+    q: z
+      .string()
+      .trim()
+      .min(2, 'q must be at least 2 characters')
+      .max(100, 'q must be at most 100 characters')
+      .optional(),
+    from: isoDateField('from').transform((value) => new Date(value)).optional(),
+    to: isoDateField('to')
+      .transform((value) =>
+        DATE_ONLY.test(value)
+          ? new Date(Date.parse(value) + DAY_MS)
+          : new Date(Date.parse(value) + 1)
+      )
+      .optional(),
+    hasEvidence: booleanQueryField('hasEvidence').optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    sort: z
+      .enum(['newest', 'oldest', 'recentlyUpdated'], {
+        message: 'sort must be one of: newest, oldest, recentlyUpdated',
+      })
+      .default('newest'),
+  })
+  .superRefine((query, ctx) => {
+    if (query.from && query.to && query.from >= query.to) {
+      ctx.addIssue({ code: 'custom', path: ['to'], message: 'to must not be earlier than from' });
+    }
+  })
+  .transform(({ to, ...rest }) => ({ ...rest, toExclusive: to }));
 
 const reportIdParamsSchema = z.object({
   id: z.string().trim().regex(/^[a-f\d]{24}$/i, 'id must be a valid report id'),

@@ -223,7 +223,7 @@ Base URL: `/api/v1`
 | --- | --- | --- |
 | `POST` | `/auth/login` | Exchange credentials for a JWT |
 | `GET` | `/auth/me` | Who the current token belongs to |
-| `GET` | `/moderator/reports` | List reports — `?status=&category=&page=&limit=&sort=` |
+| `GET` | `/moderator/reports` | List, search and filter — `?status=&category=&q=&from=&to=&hasEvidence=&sort=&page=&limit=` |
 | `GET` | `/moderator/reports/:id` | Full report with description and update history |
 | `PATCH` | `/moderator/reports/:id/status` | Move the report to a new status |
 | `POST` | `/moderator/reports/:id/updates` | Add a note without changing status |
@@ -414,6 +414,24 @@ curl "http://localhost:4000/api/v1/moderator/reports?category=SECURITY&page=1&li
   }
 }
 ```
+
+Search and filters combine freely:
+
+```bash
+curl "http://localhost:4000/api/v1/moderator/reports?q=credentials&category=security&hasEvidence=true&from=2026-09-01&to=2026-09-30&sort=recentlyUpdated" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `q` | Full-text search over descriptions (MongoDB text index: stemmed, case-insensitive, words OR-ed; `"phrase"` and `-exclude` work) |
+| `from` / `to` | Submission date range. `from` is inclusive; a plain-date `to` includes that whole day |
+| `hasEvidence` | `true` / `false` |
+| `sort` | `newest` (default), `oldest`, `recentlyUpdated` |
+| `limit` | 1–100 (default 20) |
+
+`meta.filters` echoes back what was applied after normalisation, so a client
+can see exactly how `to=2026-09-30` was interpreted.
 
 Without a token the same call returns `401`:
 
@@ -750,7 +768,7 @@ hidden.
 | No self-registration | The first admin is created via CLI; further accounts only by an admin |
 | Roles | `moderator` and `admin`. The role is re-checked against the database on every request: a token whose `role` claim no longer matches the account is rejected with `401`, so a demotion takes effect immediately and a promotion requires a fresh login |
 | Input validation | Zod on body, query and params; unknown keys rejected |
-| Injection | Validated-and-typed input into Mongoose; no string-built queries, no `$where` |
+| Injection | Validated-and-typed input into Mongoose; no string-built queries, no `$where`. Free-text search goes to a `$text` index, never into a `RegExp`, so there is nothing to escape and no ReDoS surface |
 | XSS via stored links | `evidenceUrl` is restricted to `http(s)`, blocking `javascript:` and `data:` payloads |
 | Caching | `Cache-Control: no-store` + `Pragma: no-cache` on every reporter, auth and moderator response — including errors — so no browser, proxy or CDN keeps a case code, a case status or a token |
 | Payload size | JSON bodies capped at 100 KB |
