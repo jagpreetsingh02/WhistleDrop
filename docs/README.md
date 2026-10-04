@@ -3,7 +3,9 @@
 | Path | What it is |
 | --- | --- |
 | [`WhistleDrop.postman_collection.json`](WhistleDrop.postman_collection.json) | Postman collection covering the full reporter, moderator and admin journeys (27 requests, 48 assertions) |
-| [`screenshots/`](screenshots/) | README images — see the list of shots to capture |
+| [`API.md`](API.md) | Example requests and responses for every feature |
+| [`demo.mp4`](demo.mp4) | 60-second demo |
+| [`screenshots/`](screenshots/) | Swagger UI screenshots and the demo poster used in the README |
 
 The live, always-current API reference is Swagger UI at `/api-docs` (raw
 OpenAPI JSON at `/api-docs.json`).
