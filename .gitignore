@@ -18,3 +18,16 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# Local tooling and generated media — kept on disk, never committed
+.claude/
+video/
+renders/
+/screenshots/
+/fonts/
+/sfx/
+/prompts.md
+/clip.mp4
+*.mov
+/png-sequence*/
+*.pdf

@@ -9,7 +9,7 @@ const prettier = require('eslint-config-prettier');
  * (last) switches off every stylistic rule that would fight Prettier.
  */
 module.exports = [
-  { ignores: ['node_modules/', 'coverage/'] },
+  { ignores: ['node_modules/', 'coverage/', 'video/', 'renders/', 'screenshots/'] },
 
   js.configs.recommended,
 

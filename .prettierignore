@@ -1,5 +1,8 @@
 node_modules/
 coverage/
+video/
+renders/
+screenshots/
 package-lock.json
 # Markdown is hand-formatted (wide tables, ASCII diagrams).
 *.md
