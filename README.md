@@ -6,9 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.19-339933?logo=node.js&logoColor=white)](package.json)
 
-[![Watch the demo](docs/screenshots/demo-poster.jpg)](docs/demo.mp4)
+[![WhistleDrop 60-second demo](docs/demo.webp)](docs/demo.mp4)
 
-_60-second demo_
+_The full 60-second demo, playing above. Click it for the full-quality MP4._
 
 ## What it is
 
